@@ -24,6 +24,7 @@ def rpc_callback(ch, method, properties, body):
     response["dataExchange"] = RABBITMQ_DATA_EXCHANGE
     response["dataQueue"] = RABBITMQ_DATA_QUEUE
     response["sourceConfig"] = read_config(token)
+    response["sinkConfig"] = read_config(token)
 
     ch.basic_publish(exchange='',
                      properties=pika.BasicProperties(correlation_id='config'),
