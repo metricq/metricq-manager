@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+import click
 import json
 import pika
 
@@ -35,7 +35,8 @@ def rpc_callback(ch, method, properties, body):
     print(" [x] Received {} from {}".format(body, token))
 
 
-if __name__ == "__main__":
+@click.command()
+def manager():
     rpc_connection = pika.BlockingConnection(pika.URLParameters(RABBITMQ_RPC_URI))
     rpc_channel = rpc_connection.channel()
 
