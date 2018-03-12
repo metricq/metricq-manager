@@ -40,7 +40,7 @@ class Manager:
         self.rpc_channel.start_consuming()
 
     def read_config(self, token):
-        with open(os.joinn(self.config_path, token + ".json"), 'r') as f:
+        with open(os.join(self.config_path, token + ".json"), 'r') as f:
             return json.load(f)
 
     def rpc_callback(self, channel, method, properties, body):
