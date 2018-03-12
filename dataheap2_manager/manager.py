@@ -1,59 +1,83 @@
-import click
 import json
+import os
+
+import click
+import click_completion
+import click_log
+
 import pika
 
-RABBITMQ_RPC_URI = "amqp://localhost/"
-RABBITMQ_DATA_URI = "amqp://localhost:5672/"
+from .logging import logger
 
-RABBITMQ_RPC_QUEUE = "managementQueue"
-RABBITMQ_DATA_QUEUE = "dataDrop2"
-
-RABBITMQ_DATA_EXCHANGE = "dataRouter"
+click_completion.init()
 
 
-def read_config(token):
-    with open(token + ".json", 'r') as f:
-        return json.load(f)
+class Manager:
+    def __init__(self, rpc_url, data_url, rpc_queue, data_queue, data_exchange, config_path):
+        self.data_url = data_url
+        self.data_queue = data_queue
+        self.data_exchange = data_exchange
+        self.config_path = config_path
+
+        logger.info("establishing rpc connection to {}", rpc_url)
+        self.rpc_connection = pika.BlockingConnection(pika.URLParameters(rpc_url))
+        self.rpc_channel = self.rpc_connection.channel()
+
+        logger.info("establishing data connection to {}", data_url)
+        self.data_connection = pika.BlockingConnection(pika.URLParameters(data_url))
+        self.data_channel = self.data_connection.channel()
+
+        logger.info("subscribing to rpc queue: {}", rpc_queue)
+        self.rpc_channel.queue_declare(queue=rpc_queue)
+        self.rpc_channel.basic_consume(self.rpc_callback, queue=rpc_queue, no_ack=False)
+
+        self.data_channel.queue_declare(queue=data_queue)
+        self.data_channel.exchange_declare(exchange=data_exchange, exchange_type='topic')
+        self.data_channel.queue_bind(exchange=data_exchange, queue=data_queue, routing_key='#')
+
+    def run(self):
+        logger.info('waiting for messages. to exit press CTRL+C')
+        self.rpc_channel.start_consuming()
+
+    def read_config(self, token):
+        with open(os.joinn(self.config_path, token + ".json"), 'r') as f:
+            return json.load(f)
+
+    def rpc_callback(self, channel, method, properties, body):
+        token = properties.app_id
+
+        response = dict()
+        response["dataServerAddress"] = self.data_url
+        response["dataExchange"] = self.data_exchange
+        response["dataQueue"] = self.data_queue
+        response["sourceConfig"] = self.read_config(token)
+        response["sinkConfig"] = self.read_config(token)
+
+        channel.basic_publish(exchange='',
+                         properties=pika.BasicProperties(correlation_id='config'),
+                         routing_key=properties.reply_to,
+                         body=json.dumps(response))
+        channel.basic_ack(delivery_tag=method.delivery_tag)
+
+        logger.info("Received {} from {}", body, token)
 
 
-def rpc_callback(ch, method, properties, body):
-    token = properties.app_id
-
-    response = dict()
-    response["dataServerAddress"] = RABBITMQ_DATA_URI
-    response["dataExchange"] = RABBITMQ_DATA_EXCHANGE
-    response["dataQueue"] = RABBITMQ_DATA_QUEUE
-    response["sourceConfig"] = read_config(token)
-    response["sinkConfig"] = read_config(token)
-
-    ch.basic_publish(exchange='',
-                     properties=pika.BasicProperties(correlation_id='config'),
-                     routing_key=properties.reply_to,
-                     body=json.dumps(response))
-    ch.basic_ack(delivery_tag=method.delivery_tag)
-
-    print(" [x] Received {} from {}".format(body, token))
+def validate_url(ctx, param, value):
+    try:
+        pika.URLParameters(value)
+        return value
+    except Exception:
+        raise click.BadParameter("Invalid URL")
 
 
 @click.command()
-def manager():
-    rpc_connection = pika.BlockingConnection(pika.URLParameters(RABBITMQ_RPC_URI))
-    rpc_channel = rpc_connection.channel()
-
-    data_connection = pika.BlockingConnection(pika.URLParameters(RABBITMQ_DATA_URI))
-    data_channel = data_connection.channel()
-
-    rpc_channel.queue_declare(queue=RABBITMQ_RPC_QUEUE)
-    rpc_channel.basic_consume(rpc_callback,
-                              queue=RABBITMQ_RPC_QUEUE,
-                              no_ack=False)
-
-    data_channel.queue_declare(queue=RABBITMQ_DATA_QUEUE)
-    data_channel.exchange_declare(exchange=RABBITMQ_DATA_EXCHANGE,
-                                  exchange_type='topic')
-    data_channel.queue_bind(exchange=RABBITMQ_DATA_EXCHANGE,
-                            queue=RABBITMQ_DATA_QUEUE,
-                            routing_key='#')
-
-    print(' [*] Waiting for messages. To exit press CTRL+C')
-    rpc_channel.start_consuming()
+@click.argument('rpc-url', default='amqp://localhost/', callback=validate_url)
+@click.argument('data-url', default='amqp://localhost:5672/', callback=validate_url)
+@click.option('--rpc-queue', default='managementQueue')
+@click.option('--data-queue', default='dataDrop2')
+@click.option('--data-exchange', default='dataRouter')
+@click.option('--config-path', default='.', type=click.Path(exists=True, file_okay=False, dir_okay=True))
+@click_log.simple_verbosity_option(logger)
+def manager(rpc_url, data_url, rpc_queue, data_queue, data_exchange, config_path):
+    m = Manager(rpc_url, data_url, rpc_queue, data_queue, data_exchange, config_path)
+    m.run()
