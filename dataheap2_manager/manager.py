@@ -29,29 +29,32 @@ class Manager:
 
         logger.info("subscribing to rpc queue: {}", rpc_queue)
         self.rpc_channel.queue_declare(queue=rpc_queue)
-        self.rpc_channel.basic_consume(self.rpc_callback, queue=rpc_queue, no_ack=False)
+        self.rpc_channel.basic_consume(self.handle_rpc, queue=rpc_queue, no_ack=False)
 
         self.data_channel.queue_declare(queue=data_queue)
         self.data_channel.exchange_declare(exchange=data_exchange, exchange_type='topic')
         self.data_channel.queue_bind(exchange=data_exchange, queue=data_queue, routing_key='#')
+
+        self.rpc_callbacks = {
+            'register': self.handle_register,
+        }
 
     def run(self):
         logger.info('waiting for messages. to exit press CTRL+C')
         self.rpc_channel.start_consuming()
 
     def read_config(self, token):
-        with open(os.join(self.config_path, token + ".json"), 'r') as f:
+        with open(os.path.join(self.config_path, token + ".json"), 'r') as f:
             return json.load(f)
 
-    def rpc_callback(self, channel, method, properties, body):
+    def handle_rpc(self, channel, method, properties, body):
         token = properties.app_id
 
-        response = dict()
-        response["dataServerAddress"] = self.data_url
-        response["dataExchange"] = self.data_exchange
-        response["dataQueue"] = self.data_queue
-        response["sourceConfig"] = self.read_config(token)
-        response["sinkConfig"] = self.read_config(token)
+        rpc = json.loads(body)
+        logger.info('recieved {} from {}', rpc, token)
+
+        fun = rpc['function']
+        response = self.rpc_callbacks[fun](channel, token, rpc)
 
         channel.basic_publish(exchange='',
                               properties=pika.BasicProperties(correlation_id='config'),
@@ -59,7 +62,15 @@ class Manager:
                               body=json.dumps(response))
         channel.basic_ack(delivery_tag=method.delivery_tag)
 
-        logger.info("Received {} from {}", body, token)
+    def handle_register(self, token, rpc):
+        response = {
+                   "dataServerAddress": self.data_url,
+                   "dataExchange": self.data_exchange,
+                   "dataQueue": self.data_queue,
+                   "sourceConfig": self.read_config(token),
+                   "sinkConfig": self.read_config(token),
+        }
+        return response
 
 
 def validate_url(ctx, param, value):
