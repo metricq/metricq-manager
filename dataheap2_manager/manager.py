@@ -1,5 +1,6 @@
 import json
 import os
+import uuid
 
 import click
 import click_completion
@@ -31,12 +32,16 @@ class Manager:
         self.rpc_channel.queue_declare(queue=rpc_queue)
         self.rpc_channel.basic_consume(self.handle_rpc, queue=rpc_queue, no_ack=False)
 
-        self.data_channel.queue_declare(queue=data_queue)
         self.data_channel.exchange_declare(exchange=data_exchange, exchange_type='topic')
-        self.data_channel.queue_bind(exchange=data_exchange, queue=data_queue, routing_key='#')
+
+        # self.data_channel.queue_declare(queue=data_queue)
+        # self.data_channel.queue_bind(exchange=data_exchange, queue=data_queue, routing_key='#')
 
         self.rpc_callbacks = {
             'register': self.handle_register,
+            'subscribe': self.handle_subscribe,
+            'unsubscribe': self.handle_unsubscribe,
+            'release': self.handle_release,
         }
 
     def run(self):
@@ -54,13 +59,36 @@ class Manager:
         logger.info('recieved {} from {}', rpc, token)
 
         fun = rpc['function']
-        response = self.rpc_callbacks[fun](channel, token, rpc)
+        response_function, response = self.rpc_callbacks[fun](token, rpc)
 
-        channel.basic_publish(exchange='',
-                              properties=pika.BasicProperties(correlation_id='config'),
-                              routing_key=properties.reply_to,
-                              body=json.dumps(response))
+        if response_function:
+            channel.basic_publish(exchange='',
+                                  properties=pika.BasicProperties(correlation_id=response_function),
+                                  routing_key=properties.reply_to,
+                                  body=json.dumps(response))
         channel.basic_ack(delivery_tag=method.delivery_tag)
+
+    def handle_subscribe(self, token, rpc):
+        # TODO figure out why auto-assigned queues cannot be used by the client
+        frame = self.data_channel.queue_declare('dataheap2.subscription.' + uuid.uuid4().hex)
+        queue = frame.method.queue
+        logger.debug('declared queue {} for {}', queue, token)
+        for rk in rpc['metrics']:
+            self.data_channel.queue_bind(exchange=self.data_exchange, queue=queue, routing_key=rk)
+        return 'subscribed', {'dataQueue': queue, 'metrics': rpc['metrics']}
+
+    def handle_unsubscribe(self, token, rpc):
+        queue = rpc['dataQueue']
+        logger.debug('unbinding queue {} for {}', queue, token)
+        for rk in rpc['metrics']:
+            self.data_channel.queue_unbind(queue, exchange=self.data_exchange, routing_key=rk)
+        return None, None
+
+    def handle_release(self, token, rpc):
+        queue = rpc['dataQueue']
+        logger.debug('releasing {} for {}', queue, token)
+        self.data_channel.queue_delete(queue)
+        return None, None
 
     def handle_register(self, token, rpc):
         response = {
@@ -70,7 +98,7 @@ class Manager:
                    "sourceConfig": self.read_config(token),
                    "sinkConfig": self.read_config(token),
         }
-        return response
+        return 'config', response
 
 
 def validate_url(ctx, param, value):
