@@ -54,9 +54,9 @@ class Manager:
         response["sinkConfig"] = self.read_config(token)
 
         channel.basic_publish(exchange='',
-                         properties=pika.BasicProperties(correlation_id='config'),
-                         routing_key=properties.reply_to,
-                         body=json.dumps(response))
+                              properties=pika.BasicProperties(correlation_id='config'),
+                              routing_key=properties.reply_to,
+                              body=json.dumps(response))
         channel.basic_ack(delivery_tag=method.delivery_tag)
 
         logger.info("Received {} from {}", body, token)
