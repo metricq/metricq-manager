@@ -2,6 +2,8 @@ import json
 import os
 import uuid
 from functools import partial
+import traceback
+import sys
 
 import click
 import click_completion
@@ -56,7 +58,7 @@ class Manager:
             return json.load(f)
 
     async def handle_rpc(self, exchange: aio_pika.Exchange, message : aio_pika.Message):
-        with message.process():
+        with message.process(requeue=True):
             properties = message.properties
             body = message.body
             token = properties.app_id
@@ -67,35 +69,34 @@ class Manager:
             logger.info('recieved {} from {}', rpc, token)
 
             fun = rpc['function']
-            ret = self.rpc_callbacks[fun](token, rpc)
+            ret = await self.rpc_callbacks[fun](token, rpc)
 
             if ret:
                 response_function, response = ret
-                await exchange.publish(aio_pika.Message(body=json.dumps(response),
+                await exchange.publish(aio_pika.Message(body=json.dumps(response).encode(),
                                                         correlation_id=response_function),
                                        routing_key=properties.reply_to)
 
-    def handle_subscribe(self, token, rpc):
+    async def handle_subscribe(self, token, rpc):
         # TODO figure out why auto-assigned queues cannot be used by the client
-        frame = self.data_channel.declare_queue('dataheap2.subscription.' + uuid.uuid4().hex)
-        queue = frame.method.queue
+        queue = await self.data_channel.declare_queue('dataheap2.subscription.' + uuid.uuid4().hex)
         logger.debug('declared queue {} for {}', queue, token)
         for rk in rpc['metrics']:
-            self.data_channel.queue_bind(exchange=self.data_exchange, queue=queue, routing_key=rk)
-        return 'subscribed', {'dataQueue': queue, 'metrics': rpc['metrics']}
+            await queue.bind(self.data_exchange, rk)
+        return 'subscribed', {'dataQueue': queue.name, 'metrics': rpc['metrics']}
 
-    def handle_unsubscribe(self, token, rpc):
-        queue = rpc['dataQueue']
-        logger.debug('unbinding queue {} for {}', queue, token)
+    async def handle_unsubscribe(self, token, rpc):
+        logger.debug('unbinding queue {} for {}', rpc['dataQueue'], token)
+        queue = await self.data_channel.declare_queue(rpc['dataQueue'])
         for rk in rpc['metrics']:
-            self.data_channel.queue_unbind(queue, exchange=self.data_exchange, routing_key=rk)
+            await queue.unbind(exchange=self.data_exchange, routing_key=rk)
 
-    def handle_release(self, token, rpc):
-        queue = rpc['dataQueue']
-        logger.debug('releasing {} for {}', queue, token)
-        self.data_channel.queue_delete(queue)
+    async def handle_release(self, token, rpc):
+        logger.debug('releasing {} for {}', rpc['dataQueue'], token)
+        queue = await self.data_channel.declare_queue(rpc['dataQueue'])
+        await queue.delete()
 
-    def handle_register(self, token, rpc):
+    async def handle_register(self, token, rpc):
         response = {
                    "dataServerAddress": self.data_url,
                    "dataExchange": self.data_exchange,
@@ -104,6 +105,14 @@ class Manager:
                    "sinkConfig": self.read_config(token),
         }
         return 'config', response
+
+
+def panic(loop, context):
+    print("EXCEPTION: {}".format(context['message']))
+    if context['exception']:
+        print(context['exception'])
+        traceback.print_tb(context['exception'].__traceback__)
+    loop.stop()
 
 
 @click.command()
@@ -116,6 +125,7 @@ class Manager:
 @click_log.simple_verbosity_option(logger)
 def manager(rpc_url, data_url, rpc_queue, data_queue, data_exchange, config_path):
     loop = asyncio.get_event_loop()
+    loop.set_exception_handler(panic)
     m = Manager(rpc_url, data_url, rpc_queue, data_queue, data_exchange, config_path)
     loop.create_task(m.run(loop))
     logger.info("Running RPC server")
