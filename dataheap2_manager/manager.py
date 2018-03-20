@@ -11,21 +11,27 @@ import click_log
 
 import asyncio
 import aio_pika
+import aiomonitor
 
 from .logging import logger
 
 click_completion.init()
 
 
-class Manager:
-    def __init__(self, rpc_url, data_url, rpc_queue_name, data_queue_name, data_exchange, config_path):
-        self.rpc_callbacks = {
-            'register': self.handle_register,
-            'subscribe': self.handle_subscribe,
-            'unsubscribe': self.handle_unsubscribe,
-            'release': self.handle_release,
-        }
+class RPCHandlers:
+    rpc_handlers = dict()
 
+    @classmethod
+    def register(cls, name):
+        def wrapper(func):
+            assert asyncio.iscoroutinefunction(func)
+            RPCHandlers.rpc_handlers[name] = func
+            return func
+        return wrapper
+
+
+class Manager(RPCHandlers):
+    def __init__(self, rpc_url, data_url, rpc_queue_name, data_queue_name, data_exchange, config_path):
         self.rpc_url = rpc_url
         self.rpc_queue_name = rpc_queue_name
         self.data_url = data_url
@@ -69,13 +75,14 @@ class Manager:
             logger.info('received {} from {}', rpc, token)
 
             fun = rpc['function']
-            response = await self.rpc_callbacks[fun](token, rpc)
+            response = await self.rpc_handlers[fun](token, rpc)
 
             if response:
                 await exchange.publish(aio_pika.Message(body=json.dumps(response).encode(),
                                                         correlation_id=message.correlation_id),
                                        routing_key=properties.reply_to)
 
+    @RPCHandlers.register('subscribe')
     async def handle_subscribe(self, token, rpc):
         # TODO figure out why auto-assigned queues cannot be used by the client
         queue = await self.data_channel.declare_queue('dataheap2.subscription.' + uuid.uuid4().hex)
@@ -86,17 +93,20 @@ class Manager:
         await asyncio.wait([queue.bind(self.data_exchange, rk) for rk in rpc['metrics']])
         return {'dataQueue': queue.name, 'metrics': rpc['metrics']}
 
+    @RPCHandlers.register('unsubscribe')
     async def handle_unsubscribe(self, token, rpc):
         logger.debug('unbinding queue {} for {}', rpc['dataQueue'], token)
         queue = await self.data_channel.declare_queue(rpc['dataQueue'])
         for rk in rpc['metrics']:
             await queue.unbind(exchange=self.data_exchange, routing_key=rk)
 
+    @RPCHandlers.register('release')
     async def handle_release(self, token, rpc):
         logger.debug('releasing {} for {}', rpc['dataQueue'], token)
         queue = await self.data_channel.declare_queue(rpc['dataQueue'])
         await queue.delete()
 
+    @RPCHandlers.register('register')
     async def handle_register(self, token, rpc):
         response = {
                    "dataServerAddress": self.data_url,
@@ -123,11 +133,16 @@ def panic(loop, context):
 @click.option('--data-queue', default='dataDrop2')
 @click.option('--data-exchange', default='dataRouter')
 @click.option('--config-path', default='.', type=click.Path(exists=True, file_okay=False, dir_okay=True))
+@click.option('--monitor/--no-monitor', default=True)
 @click_log.simple_verbosity_option(logger)
-def manager(rpc_url, data_url, rpc_queue, data_queue, data_exchange, config_path):
+def manager(rpc_url, data_url, rpc_queue, data_queue, data_exchange, config_path, monitor):
     loop = asyncio.get_event_loop()
     loop.set_exception_handler(panic)
     m = Manager(rpc_url, data_url, rpc_queue, data_queue, data_exchange, config_path)
     loop.create_task(m.run(loop))
-    logger.info("Running RPC server")
-    loop.run_forever()
+    logger.info("starting management loop")
+    if monitor:
+        with aiomonitor.start_monitor(loop):
+            loop.run_forever()
+    else:
+        loop.run_forever()
