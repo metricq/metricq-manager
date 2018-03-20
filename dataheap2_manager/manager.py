@@ -142,7 +142,7 @@ def manager_cmd(rpc_url, data_url, rpc_queue, data_queue, data_exchange, config_
     loop.create_task(m.run(loop))
     logger.info("starting management loop")
     if monitor:
-        with aiomonitor.start_monitor(loop):
+        with aiomonitor.start_monitor(loop, locals={'manager': m}):
             loop.run_forever()
     else:
         loop.run_forever()
