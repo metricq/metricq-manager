@@ -66,7 +66,7 @@ class Manager:
             if isinstance(body, bytes):
                 body = body.decode()
             rpc = json.loads(body)
-            logger.info('recieved {} from {}', rpc, token)
+            logger.info('received {} from {}', rpc, token)
 
             fun = rpc['function']
             response = await self.rpc_callbacks[fun](token, rpc)
