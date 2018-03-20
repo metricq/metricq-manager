@@ -8,6 +8,6 @@ setup(name='dataheap2_manager',
       scripts=[],
       entry_points='''
       [console_scripts]
-      dataheap2-manager=dataheap2_manager:manager
+      dataheap2-manager=dataheap2_manager:manager_cmd
       ''',
       install_requires=['aio-pika', 'aiomonitor', 'click', 'click-completion', 'click_log', 'colorama'])

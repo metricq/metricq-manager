@@ -135,7 +135,7 @@ def panic(loop, context):
 @click.option('--config-path', default='.', type=click.Path(exists=True, file_okay=False, dir_okay=True))
 @click.option('--monitor/--no-monitor', default=True)
 @click_log.simple_verbosity_option(logger)
-def manager(rpc_url, data_url, rpc_queue, data_queue, data_exchange, config_path, monitor):
+def manager_cmd(rpc_url, data_url, rpc_queue, data_queue, data_exchange, config_path, monitor):
     loop = asyncio.get_event_loop()
     loop.set_exception_handler(panic)
     m = Manager(rpc_url, data_url, rpc_queue, data_queue, data_exchange, config_path)

@@ -1,1 +1,1 @@
-from .manager import manager
+from .manager import manager_cmd
