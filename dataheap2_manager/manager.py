@@ -69,12 +69,11 @@ class Manager:
             logger.info('recieved {} from {}', rpc, token)
 
             fun = rpc['function']
-            ret = await self.rpc_callbacks[fun](token, rpc)
+            response = await self.rpc_callbacks[fun](token, rpc)
 
-            if ret:
-                response_function, response = ret
+            if response:
                 await exchange.publish(aio_pika.Message(body=json.dumps(response).encode(),
-                                                        correlation_id=response_function),
+                                                        correlation_id=message.correlation_id),
                                        routing_key=properties.reply_to)
 
     async def handle_subscribe(self, token, rpc):
@@ -85,7 +84,7 @@ class Manager:
             # TODO throw some error
             assert False
         await asyncio.wait([queue.bind(self.data_exchange, rk) for rk in rpc['metrics']])
-        return 'subscribed', {'dataQueue': queue.name, 'metrics': rpc['metrics']}
+        return {'dataQueue': queue.name, 'metrics': rpc['metrics']}
 
     async def handle_unsubscribe(self, token, rpc):
         logger.debug('unbinding queue {} for {}', rpc['dataQueue'], token)
@@ -106,7 +105,7 @@ class Manager:
                    "sourceConfig": self.read_config(token),
                    "sinkConfig": self.read_config(token),
         }
-        return 'config', response
+        return response
 
 
 def panic(loop, context):
