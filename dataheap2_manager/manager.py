@@ -81,8 +81,10 @@ class Manager:
         # TODO figure out why auto-assigned queues cannot be used by the client
         queue = await self.data_channel.declare_queue('dataheap2.subscription.' + uuid.uuid4().hex)
         logger.debug('declared queue {} for {}', queue, token)
-        for rk in rpc['metrics']:
-            await queue.bind(self.data_exchange, rk)
+        if not rpc['metrics']:
+            # TODO throw some error
+            assert False
+        await asyncio.wait([queue.bind(self.data_exchange, rk) for rk in rpc['metrics']])
         return 'subscribed', {'dataQueue': queue.name, 'metrics': rpc['metrics']}
 
     async def handle_unsubscribe(self, token, rpc):
