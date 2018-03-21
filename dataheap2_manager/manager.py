@@ -47,6 +47,7 @@ class Manager(RPCHandlers):
         self.rpc_connection = None
         self.rpc_channel = None
         self.rpc_queue = None
+        self.rpc_response_queue = None
         self.data_connection = None
         self.data_channel = None
         self.response_handlers = dict()
@@ -56,6 +57,7 @@ class Manager(RPCHandlers):
         self.rpc_connection = await aio_pika.connect_robust(self.rpc_url, loop=self.loop)
         self.rpc_channel = await self.rpc_connection.channel()
         self.rpc_queue = await self.rpc_channel.declare_queue(self.rpc_queue_name)
+        self.rpc_response_queue = await self.rpc_channel.declare_queue(exclusive=True)
 
         logger.info("creating exchanges")
         self.management_exchange = await self.rpc_channel.declare_exchange(name=self.management_exchange_name, type=aio_pika.ExchangeType.TOPIC)
@@ -67,7 +69,9 @@ class Manager(RPCHandlers):
         self.data_channel = await self.data_connection.channel()
         await self.data_channel.declare_exchange(self.data_exchange, type=aio_pika.ExchangeType.TOPIC)
 
-        await self.rpc_queue.consume(partial(self.handle_rpc, self.rpc_channel.default_exchange))
+        consume_rpc = self.rpc_queue.consume(self.handle_rpc)
+        consume_rpc_response = self.rpc_response_queue.consume(self.handle_rpc_response)
+        await asyncio.wait([consume_rpc, consume_rpc_response])
 
     def read_config(self, token):
         with open(os.path.join(self.config_path, token + ".json"), 'r') as f:
@@ -88,65 +92,71 @@ class Manager(RPCHandlers):
         self.response_handlers[correlation_id] = handler
         logger.info('sending rpc to {} / {}: {}', target, correlation_id, body)
         await exchange.publish(aio_pika.Message(body=json.dumps(body).encode(), correlation_id=correlation_id,
-                                                reply_to=self.rpc_queue_name),
+                                                reply_to=self.rpc_response_queue.name, content_type="application/json"),
                                routing_key=routing_key)
 
-    async def handle_rpc(self, exchange: aio_pika.Exchange, message : aio_pika.Message):
+    async def handle_rpc(self, message: aio_pika.Message):
         with message.process(requeue=True):
-            properties = message.properties
-            body_str = message.body
-            token = properties.app_id
-
-            if isinstance(body_str, bytes):
-                body_str = body_str.decode()
-            logger.info('received {} from {} on "{}"', body_str, token, exchange.name)
+            body_str = message.body.decode()
+            token = message.properties.app_id
+            logger.info('received request from {}: {}', token, body_str)
             body = json.loads(body_str)
+            fun = body['function']
 
-            if message.reply_to:
-                # Client calls us
-                fun = body['function']
-                response = await self.rpc_handlers[fun](self, token, body)
+            response = await self.rpc_handlers[fun](self, token, body)
 
-                if response is None:
-                    response = dict()
+            if response is None:
+                response = dict()
 
-                await exchange.publish(aio_pika.Message(body=json.dumps(response).encode(),
-                                                        correlation_id=message.correlation_id),
-                                       routing_key=properties.reply_to)
+            await self.rpc_channel.default_exchange.publish(
+                aio_pika.Message(body=json.dumps(response).encode(),
+                                 correlation_id=message.correlation_id,
+                                 content_type="application/json"),
+                routing_key=message.properties.reply_to)
 
-            else:
-                # Response from client
-                try:
-                    handler = self.response_handlers[message.correlation_id.decode()]
-                except KeyError:
-                    logger.warn("unexpected RPC reply from {} / {}: {}", token, message.correlation_id, body_str)
-                    return
-                # TODO we might delete this ... but if its broadcast responses :-(
-                handler(token, body)
+    async def handle_rpc_response(self, message: aio_pika.Message):
+        with message.process(requeue=True):
+            body_str = message.body.decode()
+            logger.info('received response from {}: {}', message.properties.app_id, body_str)
+            body = json.loads(body_str)
+            try:
+                handler = self.response_handlers[message.correlation_id.decode()]
+            except KeyError:
+                logger.warn("discarding unexpected RPC reply from {} / {}: {}",
+                            message.properties.app_id, message.correlation_id,message.body)
+                return
+            handler(message.properties.app_id, body)
+            # TODO we should eventually delete the entry eventually ... but if its broadcast response
 
     @RPCHandlers.register('subscribe')
     async def handle_subscribe(self, token, body):
         # TODO figure out why auto-assigned queues cannot be used by the client
-        queue = await self.data_channel.declare_queue('dataheap2.subscription.' + uuid.uuid4().hex)
+        queue_name = 'subscription-' + uuid.uuid4().hex
+        logger.debug('attempting to declare queue {} for {}', queue_name, token)
+        queue = await self.data_channel.declare_queue(queue_name)
         logger.debug('declared queue {} for {}', queue, token)
         if not body['metrics']:
             # TODO throw some error
             assert False
-        await asyncio.wait([queue.bind(self.data_exchange, rk) for rk in body['metrics']])
+        await asyncio.wait([queue.bind(exchange=self.data_exchange, routing_key=rk) for rk in body['metrics']])
         return {'dataQueue': queue.name, 'metrics': body['metrics']}
 
     @RPCHandlers.register('unsubscribe')
     async def handle_unsubscribe(self, token, body):
-        logger.debug('unbinding queue {} for {}', body['dataQueue'], token)
-        queue = await self.data_channel.declare_queue(body['dataQueue'])
-        for rk in body['metrics']:
-            await queue.unbind(exchange=self.data_exchange, routing_key=rk)
+        queue_name = body['dataQueue']
+        logger.debug('unbinding queue {} for {}', queue_name, token)
+        queue = await self.data_channel.declare_queue(queue_name)
+        assert body['metrics']
+        await asyncio.wait([queue.unbind(exchange=self.data_exchange, routing_key=rk) for rk in body['metrics']])
+        await self.data_channel.default_exchange.publish(aio_pika.Message(body=b'', type='end'),
+                                                         routing_key=queue_name)
+        return {'dataServerAddress': self.data_url}
 
     @RPCHandlers.register('release')
     async def handle_release(self, token, body):
         logger.debug('releasing {} for {}', body['dataQueue'], token)
         queue = await self.data_channel.declare_queue(body['dataQueue'])
-        await queue.delete()
+        await queue.delete(if_unused=False, if_empty=False)
 
     @RPCHandlers.register('source.register')
     async def handle_register(self, token, body):
