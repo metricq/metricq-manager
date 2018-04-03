@@ -32,16 +32,20 @@ class RPCHandlers:
 
 class Manager(RPCHandlers):
     def __init__(self, rpc_url, data_url, rpc_queue_name,
-                 management_exchange, broadcast_exchange, data_exchange, config_path):
+                 management_exchange, broadcast_exchange, data_exchange, history_exchange,
+                 config_path, queue_ttl):
         self.rpc_url = rpc_url
         self.rpc_queue_name = rpc_queue_name
         self.data_url = data_url
         self.management_exchange_name = management_exchange
         self.management_exchange = None
         self.broadcast_exchange_name = broadcast_exchange
-        self.broadcast_exchange= None
+        self.broadcast_exchange = None
+        self.history_exchange_name = history_exchange
+        self.history_exchange = None
         self.data_exchange = data_exchange
         self.config_path = config_path
+        self.queue_ttl = queue_ttl
 
         self.loop = None
         self.rpc_connection = None
@@ -59,7 +63,7 @@ class Manager(RPCHandlers):
         self.rpc_queue = await self.rpc_channel.declare_queue(self.rpc_queue_name)
         self.rpc_response_queue = await self.rpc_channel.declare_queue(exclusive=True)
 
-        logger.info("creating exchanges")
+        logger.info("creating rpc exchanges")
         self.management_exchange = await self.rpc_channel.declare_exchange(name=self.management_exchange_name, type=aio_pika.ExchangeType.TOPIC)
         self.broadcast_exchange = await self.rpc_channel.declare_exchange(name=self.broadcast_exchange_name, type=aio_pika.ExchangeType.FANOUT)
         await self.rpc_queue.bind(exchange=self.management_exchange, routing_key="#")
@@ -67,7 +71,10 @@ class Manager(RPCHandlers):
         logger.info("establishing data connection to {}", self.data_url)
         self.data_connection = await aio_pika.connect_robust(self.data_url, loop=self.loop)
         self.data_channel = await self.data_connection.channel()
+
+        logger.info("creating data exchanges")
         await self.data_channel.declare_exchange(self.data_exchange, type=aio_pika.ExchangeType.TOPIC)
+        self.history_exchange = await self.data_channel.declare_exchange(name=self.history_exchange_name, type=aio_pika.ExchangeType.TOPIC)
 
         consume_rpc = self.rpc_queue.consume(self.handle_rpc)
         consume_rpc_response = self.rpc_response_queue.consume(self.handle_rpc_response)
@@ -167,6 +174,30 @@ class Manager(RPCHandlers):
         }
         return response
 
+    @RPCHandlers.register('db.register')
+    async def handle_db_register(self, token, body):
+        db_uuid = uuid.uuid4().hex
+        history_queue_name = 'history-' + db_uuid
+        logger.debug('attempting to declare queue {} for {}', history_queue_name, token)
+        history_queue = await self.data_channel.declare_queue(history_queue_name, arguments={"x-expires": self.queue_ttl})
+        logger.debug('declared queue {} for {}', history_queue, token)
+
+        data_queue_name = 'data-' + db_uuid
+        logger.debug('attempting to declare queue {} for {}', data_queue_name, token)
+        data_queue = await self.data_channel.declare_queue(data_queue_name, arguments={"x-expires": self.queue_ttl})
+        logger.debug('declared queue {} for {}', data_queue, token)
+
+        await history_queue.bind(exchange=self.history_exchange, routing_key="#")
+        await data_queue.bind(exchange=self.data_exchange, routing_key="#")
+
+        response = {
+                   "dataServerAddress": self.data_url,
+                   "dataQueue": data_queue_name,
+                   "historyQueue": history_queue_name,
+                   "config": self.read_config(token),
+        }
+        return response
+
 
 def panic(loop, context):
     print("EXCEPTION: {}".format(context['message']))
@@ -183,13 +214,15 @@ def panic(loop, context):
 @click.option('--broadcast-exchange', default='dh2.broadcast')
 @click.option('--management-exchange', default='dh2.management')
 @click.option('--data-exchange', default='dh2.data')
+@click.option('--history-exchange', default='dh2.history')
+@click.option('--queue-ttl', default=30 * 60 * 1000)
 @click.option('--config-path', default='.', type=click.Path(exists=True, file_okay=False, dir_okay=True))
 @click.option('--monitor/--no-monitor', default=True)
 @click_log.simple_verbosity_option(logger)
-def manager_cmd(rpc_url, data_url, rpc_queue, management_exchange, broadcast_exchange, data_exchange, config_path, monitor):
+def manager_cmd(rpc_url, data_url, rpc_queue, management_exchange, broadcast_exchange, data_exchange, history_exchange, config_path, queue_ttl, monitor):
     loop = asyncio.get_event_loop()
     loop.set_exception_handler(panic)
-    m = Manager(rpc_url, data_url, rpc_queue, management_exchange, broadcast_exchange, data_exchange, config_path)
+    m = Manager(rpc_url, data_url, rpc_queue, management_exchange, broadcast_exchange, data_exchange, history_exchange, config_path, queue_ttl)
     loop.create_task(m.run(loop))
     logger.info("starting management loop")
     if monitor:
