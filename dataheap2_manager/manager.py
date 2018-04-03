@@ -166,7 +166,7 @@ class Manager(RPCHandlers):
         await queue.delete(if_unused=False, if_empty=False)
 
     @RPCHandlers.register('source.register')
-    async def handle_register(self, token, body):
+    async def handle_source_register(self, token, body):
         response = {
                    "dataServerAddress": self.data_url,
                    "dataExchange": self.data_exchange,
