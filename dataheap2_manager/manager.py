@@ -13,145 +13,96 @@ import asyncio
 import aio_pika
 import aiomonitor
 
-from .logging import logger
+from dataheap2 import Agent, rpc_handler
+from dataheap2.agent import panic
+from dataheap2.logging import logger
+
+click_log.basic_config(logger)
+logger.setLevel('INFO')
 
 click_completion.init()
 
 
-class RPCHandlers:
-    rpc_handlers = dict()
+class Manager(Agent):
+    def __init__(self, management_url, data_url, config_path, queue_ttl):
+        super().__init__('manager', management_url)
 
-    @classmethod
-    def register(cls, name):
-        def wrapper(func):
-            assert asyncio.iscoroutinefunction(func)
-            RPCHandlers.rpc_handlers[name] = func
-            return func
-        return wrapper
+        self.management_queue_name = 'management'
+        self.management_queue = None
 
+        self.data_connection = None
+        self.data_channel = None
 
-class Manager(RPCHandlers):
-    def __init__(self, rpc_url, data_url, rpc_queue_name,
-                 management_exchange, broadcast_exchange, data_exchange, history_exchange,
-                 config_path, queue_ttl):
-        self.rpc_url = rpc_url
-        self.rpc_queue_name = rpc_queue_name
         self.data_url = data_url
-        self.management_exchange_name = management_exchange
-        self.management_exchange = None
-        self.broadcast_exchange_name = broadcast_exchange
-        self.broadcast_exchange = None
-        self.history_exchange_name = history_exchange
+
+        self.data_exchange_name = 'dh2.data'
+        self.data_exchange = None
+
+        self.history_exchange_name = 'dh2.history'
         self.history_exchange = None
-        self.data_exchange = data_exchange
+
         self.config_path = config_path
         self.queue_ttl = queue_ttl
 
-        self.loop = None
-        self.rpc_connection = None
-        self.rpc_channel = None
-        self.rpc_queue = None
-        self.rpc_response_queue = None
-        self.data_connection = None
-        self.data_channel = None
-        self.response_handlers = dict()
+    async def connect(self):
+        await super().connect()
 
-    async def run(self, loop):
-        logger.info("establishing rpc connection to {} / {}", self.rpc_url, self.rpc_queue_name)
-        self.rpc_connection = await aio_pika.connect_robust(self.rpc_url, loop=self.loop)
-        self.rpc_channel = await self.rpc_connection.channel()
-        self.rpc_queue = await self.rpc_channel.declare_queue(self.rpc_queue_name)
-        self.rpc_response_queue = await self.rpc_channel.declare_queue(exclusive=True)
+        # TODO persistent?
+        self.management_queue = await self._management_channel.declare_queue(self.management_queue_name)
 
-        logger.info("creating rpc exchanges")
-        self.management_exchange = await self.rpc_channel.declare_exchange(name=self.management_exchange_name, type=aio_pika.ExchangeType.TOPIC)
-        self.broadcast_exchange = await self.rpc_channel.declare_exchange(name=self.broadcast_exchange_name, type=aio_pika.ExchangeType.FANOUT)
-        await self.rpc_queue.bind(exchange=self.management_exchange, routing_key="#")
+        logger.info('creating rpc exchanges')
+        self._management_exchange = await self._management_channel.declare_exchange(
+            name=self._management_exchange_name, type=aio_pika.ExchangeType.TOPIC)
+        self._management_broadcast_exchange = await self._management_channel.declare_exchange(
+            name=self._management_broadcast_exchange_name, type=aio_pika.ExchangeType.FANOUT)
+
+        await self.management_queue.bind(exchange=self._management_exchange, routing_key="#")
 
         logger.info("establishing data connection to {}", self.data_url)
-        self.data_connection = await aio_pika.connect_robust(self.data_url, loop=self.loop)
+        self.data_connection = await aio_pika.connect_robust(self.data_url, loop=self.event_loop)
         self.data_channel = await self.data_connection.channel()
 
         logger.info("creating data exchanges")
-        await self.data_channel.declare_exchange(self.data_exchange, type=aio_pika.ExchangeType.TOPIC)
-        self.history_exchange = await self.data_channel.declare_exchange(name=self.history_exchange_name, type=aio_pika.ExchangeType.TOPIC)
+        self.data_exchange = await self.data_channel.declare_exchange(
+            name=self.data_exchange_name, type=aio_pika.ExchangeType.TOPIC)
+        self.history_exchange = await self.data_channel.declare_exchange(
+            name=self.history_exchange_name, type=aio_pika.ExchangeType.TOPIC)
 
-        consume_rpc = self.rpc_queue.consume(self.handle_rpc)
-        consume_rpc_response = self.rpc_response_queue.consume(self.handle_rpc_response)
-        await asyncio.wait([consume_rpc, consume_rpc_response])
+        await self._management_consume([self.management_queue])
 
     def read_config(self, token):
         with open(os.path.join(self.config_path, token + ".json"), 'r') as f:
             return json.load(f)
 
-    async def rpc(self, target, function, body=None, handler=print):
-        if body is None:
-            body = dict()
-        body['function'] = function
-        if target:
-            exchange = self.rpc_channel.default_exchange
-            routing_key = target
+    async def rpc(self, function, response_callback, to_token=None, **kwargs):
+        if to_token:
+            kwargs['exchange'] = self._management_channel.default_exchange
+            kwargs['routing_key'] = '{}-rpc'.format(to_token)
+            kwargs['cleanup_on_response'] = True
         else:
-            exchange = self.broadcast_exchange
-            routing_key = function
+            kwargs['exchange'] = self._management_broadcast_exchange
+            kwargs['routing_key'] = function
+            kwargs['cleanup_on_response'] = False
 
-        correlation_id = 'dh2.rpc.{}'.format(uuid.uuid4().hex)
-        self.response_handlers[correlation_id] = handler
-        logger.info('sending rpc to {} / {}: {}', target, correlation_id, body)
-        await exchange.publish(aio_pika.Message(body=json.dumps(body).encode(), correlation_id=correlation_id,
-                                                reply_to=self.rpc_response_queue.name, content_type="application/json"),
-                               routing_key=routing_key)
+        await self._rpc(function, response_callback, **kwargs)
 
-    async def handle_rpc(self, message: aio_pika.Message):
-        with message.process(requeue=True):
-            body_str = message.body.decode()
-            token = message.properties.app_id
-            logger.info('received request from {}: {}', token, body_str)
-            body = json.loads(body_str)
-            fun = body['function']
-
-            response = await self.rpc_handlers[fun](self, token, body)
-
-            if response is None:
-                response = dict()
-
-            await self.rpc_channel.default_exchange.publish(
-                aio_pika.Message(body=json.dumps(response).encode(),
-                                 correlation_id=message.correlation_id,
-                                 content_type="application/json"),
-                routing_key=message.properties.reply_to)
-
-    async def handle_rpc_response(self, message: aio_pika.Message):
-        with message.process(requeue=True):
-            body_str = message.body.decode()
-            logger.info('received response from {}: {}', message.properties.app_id, body_str)
-            body = json.loads(body_str)
-            try:
-                handler = self.response_handlers[message.correlation_id.decode()]
-            except KeyError:
-                logger.warn("discarding unexpected RPC reply from {} / {}: {}",
-                            message.properties.app_id, message.correlation_id,message.body)
-                return
-            handler(message.properties.app_id, body)
-            # TODO we should eventually delete the entry eventually ... but if its broadcast response
-
-    @RPCHandlers.register('subscribe')
-    async def handle_subscribe(self, token, body):
+    @rpc_handler('subscribe')
+    async def handle_subscribe(self, from_token, **body):
         # TODO figure out why auto-assigned queues cannot be used by the client
         queue_name = 'subscription-' + uuid.uuid4().hex
-        logger.debug('attempting to declare queue {} for {}', queue_name, token)
+        logger.debug('attempting to declare queue {} for {}', queue_name, from_token)
         queue = await self.data_channel.declare_queue(queue_name)
-        logger.debug('declared queue {} for {}', queue, token)
+        logger.debug('declared queue {} for {}', queue, from_token)
         if not body['metrics']:
             # TODO throw some error
             assert False
         await asyncio.wait([queue.bind(exchange=self.data_exchange, routing_key=rk) for rk in body['metrics']])
         return {'dataQueue': queue.name, 'metrics': body['metrics']}
 
-    @RPCHandlers.register('unsubscribe')
-    async def handle_unsubscribe(self, token, body):
+    @rpc_handler('unsubscribe')
+    async def handle_unsubscribe(self, from_token, **body):
         queue_name = body['dataQueue']
-        logger.debug('unbinding queue {} for {}', queue_name, token)
+        logger.debug('unbinding queue {} for {}', queue_name, from_token)
         queue = await self.data_channel.declare_queue(queue_name)
         assert body['metrics']
         await asyncio.wait([queue.unbind(exchange=self.data_exchange, routing_key=rk) for rk in body['metrics']])
@@ -159,33 +110,33 @@ class Manager(RPCHandlers):
                                                          routing_key=queue_name)
         return {'dataServerAddress': self.data_url}
 
-    @RPCHandlers.register('release')
-    async def handle_release(self, token, body):
-        logger.debug('releasing {} for {}', body['dataQueue'], token)
+    @rpc_handler('release')
+    async def handle_release(self, from_token, **body):
+        logger.debug('releasing {} for {}', body['dataQueue'], from_token)
         queue = await self.data_channel.declare_queue(body['dataQueue'])
         await queue.delete(if_unused=False, if_empty=False)
 
-    @RPCHandlers.register('source.register')
-    async def handle_source_register(self, token, body):
+    @rpc_handler('source.register')
+    async def handle_source_register(self, from_token, **body):
         response = {
                    "dataServerAddress": self.data_url,
-                   "dataExchange": self.data_exchange,
-                   "config": self.read_config(token),
+                   "dataExchange": self.data_exchange.name,
+                   "config": self.read_config(from_token),
         }
         return response
 
-    @RPCHandlers.register('db.register')
-    async def handle_db_register(self, token, body):
+    @rpc_handler('db.register')
+    async def handle_db_register(self, from_token, body):
         db_uuid = uuid.uuid4().hex
         history_queue_name = 'history-' + db_uuid
-        logger.debug('attempting to declare queue {} for {}', history_queue_name, token)
+        logger.debug('attempting to declare queue {} for {}', history_queue_name, from_token)
         history_queue = await self.data_channel.declare_queue(history_queue_name, arguments={"x-expires": self.queue_ttl})
-        logger.debug('declared queue {} for {}', history_queue, token)
+        logger.debug('declared queue {} for {}', history_queue, from_token)
 
         data_queue_name = 'data-' + db_uuid
-        logger.debug('attempting to declare queue {} for {}', data_queue_name, token)
+        logger.debug('attempting to declare queue {} for {}', data_queue_name, from_token)
         data_queue = await self.data_channel.declare_queue(data_queue_name, arguments={"x-expires": self.queue_ttl})
-        logger.debug('declared queue {} for {}', data_queue, token)
+        logger.debug('declared queue {} for {}', data_queue, from_token)
 
         await history_queue.bind(exchange=self.history_exchange, routing_key="#")
         await data_queue.bind(exchange=self.data_exchange, routing_key="#")
@@ -194,36 +145,23 @@ class Manager(RPCHandlers):
                    "dataServerAddress": self.data_url,
                    "dataQueue": data_queue_name,
                    "historyQueue": history_queue_name,
-                   "config": self.read_config(token),
+                   "config": self.read_config(from_token),
         }
         return response
-
-
-def panic(loop, context):
-    print("EXCEPTION: {}".format(context['message']))
-    if context['exception']:
-        print(context['exception'])
-        traceback.print_tb(context['exception'].__traceback__)
-    loop.stop()
 
 
 @click.command()
 @click.argument('rpc-url', default='amqp://localhost/')
 @click.argument('data-url', default='amqp://localhost:5672/')
-@click.option('--rpc-queue', default='management')
-@click.option('--broadcast-exchange', default='dh2.broadcast')
-@click.option('--management-exchange', default='dh2.management')
-@click.option('--data-exchange', default='dh2.data')
-@click.option('--history-exchange', default='dh2.history')
 @click.option('--queue-ttl', default=30 * 60 * 1000)
 @click.option('--config-path', default='.', type=click.Path(exists=True, file_okay=False, dir_okay=True))
 @click.option('--monitor/--no-monitor', default=True)
 @click_log.simple_verbosity_option(logger)
-def manager_cmd(rpc_url, data_url, rpc_queue, management_exchange, broadcast_exchange, data_exchange, history_exchange, config_path, queue_ttl, monitor):
+def manager_cmd(rpc_url, data_url, config_path, queue_ttl, monitor):
     loop = asyncio.get_event_loop()
     loop.set_exception_handler(panic)
-    m = Manager(rpc_url, data_url, rpc_queue, management_exchange, broadcast_exchange, data_exchange, history_exchange, config_path, queue_ttl)
-    loop.create_task(m.run(loop))
+    m = Manager(rpc_url, data_url, config_path, queue_ttl)
+    loop.create_task(m.connect())
     logger.info("starting management loop")
     if monitor:
         with aiomonitor.start_monitor(loop, locals={'manager': m}):
