@@ -14,7 +14,6 @@ import aio_pika
 import aiomonitor
 
 from dataheap2 import Agent, rpc_handler
-from dataheap2.agent import panic
 from dataheap2.logging import logger
 
 click_log.basic_config(logger)
@@ -158,13 +157,9 @@ class Manager(Agent):
 @click.option('--monitor/--no-monitor', default=True)
 @click_log.simple_verbosity_option(logger)
 def manager_cmd(rpc_url, data_url, config_path, queue_ttl, monitor):
-    loop = asyncio.get_event_loop()
-    loop.set_exception_handler(panic)
-    m = Manager(rpc_url, data_url, config_path, queue_ttl)
-    loop.create_task(m.connect())
-    logger.info("starting management loop")
+    manager = Manager(rpc_url, data_url, config_path, queue_ttl)
     if monitor:
-        with aiomonitor.start_monitor(loop, locals={'manager': m}):
-            loop.run_forever()
+        with aiomonitor.start_monitor(manager.event_loop, locals={'manager': manager}):
+            manager.run()
     else:
-        loop.run_forever()
+        manager.run()
