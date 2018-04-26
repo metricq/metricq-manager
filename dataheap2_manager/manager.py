@@ -1,9 +1,7 @@
 import json
 import os
 import uuid
-from functools import partial
-import traceback
-import sys
+import logging
 
 import click
 import click_completion
@@ -14,10 +12,15 @@ import aio_pika
 import aiomonitor
 
 from dataheap2 import Agent, rpc_handler
-from dataheap2.logging import logger
+from dataheap2.logging import get_logger
+
+logger = get_logger()
 
 click_log.basic_config(logger)
 logger.setLevel('INFO')
+# Use this if we ever use threads
+# logger.handlers[0].formatter = logging.Formatter(fmt='%(asctime)s %(threadName)-16s %(levelname)-8s %(message)s')
+logger.handlers[0].formatter = logging.Formatter(fmt='%(asctime)s [%(levelname)-8s] [%(name)-20s] %(message)s')
 
 click_completion.init()
 
@@ -47,18 +50,18 @@ class Manager(Agent):
         await super().connect()
 
         # TODO persistent?
-        self.management_queue = await self._management_channel.declare_queue(self.management_queue_name)
+        self.management_queue = await self._management_channel.declare_queue(self.management_queue_name, durable=True)
 
         logger.info('creating rpc exchanges')
         self._management_exchange = await self._management_channel.declare_exchange(
-            name=self._management_exchange_name, type=aio_pika.ExchangeType.TOPIC)
+            name=self._management_exchange_name, type=aio_pika.ExchangeType.TOPIC, durable=True)
         self._management_broadcast_exchange = await self._management_channel.declare_exchange(
-            name=self._management_broadcast_exchange_name, type=aio_pika.ExchangeType.FANOUT)
+            name=self._management_broadcast_exchange_name, type=aio_pika.ExchangeType.FANOUT, durable=True)
 
         await self.management_queue.bind(exchange=self._management_exchange, routing_key="#")
 
         logger.info("establishing data connection to {}", self.data_url)
-        self.data_connection = await aio_pika.connect_robust(self.data_url, loop=self.event_loop)
+        self.data_connection = await self._connect(self.data_url)
         self.data_channel = await self.data_connection.channel()
 
         logger.info("creating data exchanges")
