@@ -98,7 +98,8 @@ class Manager(Agent):
         if not body['metrics']:
             # TODO throw some error
             assert False
-        await asyncio.wait([queue.bind(exchange=self.data_exchange, routing_key=rk) for rk in body['metrics']])
+        await asyncio.wait([queue.bind(exchange=self.data_exchange, routing_key=rk) for rk in body['metrics']],
+                           loop=self.event_loop)
         return {'dataQueue': queue.name, 'metrics': body['metrics']}
 
     @rpc_handler('unsubscribe')
@@ -107,7 +108,8 @@ class Manager(Agent):
         logger.debug('unbinding queue {} for {}', queue_name, from_token)
         queue = await self.data_channel.declare_queue(queue_name)
         assert body['metrics']
-        await asyncio.wait([queue.unbind(exchange=self.data_exchange, routing_key=rk) for rk in body['metrics']])
+        await asyncio.wait([queue.unbind(exchange=self.data_exchange, routing_key=rk) for rk in body['metrics']],
+                           loop=self.event_loop)
         await self.data_channel.default_exchange.publish(aio_pika.Message(body=b'', type='end'),
                                                          routing_key=queue_name)
         return {'dataServerAddress': self.data_url}
