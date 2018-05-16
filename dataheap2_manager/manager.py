@@ -134,12 +134,12 @@ class Manager(Agent):
         db_uuid = from_token
         history_queue_name = 'history-' + db_uuid
         logger.debug('attempting to declare queue {} for {}', history_queue_name, from_token)
-        history_queue = await self.data_channel.declare_queue(history_queue_name, arguments={"x-expires": self.queue_ttl})
+        history_queue = await self.data_channel.declare_queue(history_queue_name)
         logger.debug('declared queue {} for {}', history_queue, from_token)
 
         data_queue_name = 'data-' + db_uuid
         logger.debug('attempting to declare queue {} for {}', data_queue_name, from_token)
-        data_queue = await self.data_channel.declare_queue(data_queue_name, arguments={"x-expires": self.queue_ttl})
+        data_queue = await self.data_channel.declare_queue(data_queue_name)
         logger.debug('declared queue {} for {}', data_queue, from_token)
 
         await history_queue.bind(exchange=self.history_exchange, routing_key="#")
