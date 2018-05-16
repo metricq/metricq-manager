@@ -130,7 +130,7 @@ class Manager(Agent):
         return response
 
     @rpc_handler('db.register')
-    async def handle_db_register(self, from_token, body):
+    async def handle_db_register(self, from_token, **body):
         db_uuid = uuid.uuid4().hex
         history_queue_name = 'history-' + db_uuid
         logger.debug('attempting to declare queue {} for {}', history_queue_name, from_token)
