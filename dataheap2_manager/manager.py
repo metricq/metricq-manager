@@ -140,6 +140,15 @@ class Manager(Agent):
         }
         return response
 
+    @rpc_handler('source.metrics_list')
+    async def handle_source_metadata(self, from_token, **body):
+        for metric in body['metrics']:
+            cdb_data = {
+                "_id": metric,
+            }
+            self.couchdb_db_metadata.create_document(cdb_data)
+
+
     @rpc_handler('db.register')
     async def handle_db_register(self, from_token, **body):
         db_uuid = from_token
