@@ -131,7 +131,7 @@ class Manager(Agent):
 
     @rpc_handler('db.register')
     async def handle_db_register(self, from_token, **body):
-        db_uuid = uuid.uuid4().hex
+        db_uuid = from_token
         history_queue_name = 'history-' + db_uuid
         logger.debug('attempting to declare queue {} for {}', history_queue_name, from_token)
         history_queue = await self.data_channel.declare_queue(history_queue_name, arguments={"x-expires": self.queue_ttl})
