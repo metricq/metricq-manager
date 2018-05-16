@@ -11,6 +11,8 @@ import asyncio
 import aio_pika
 import aiomonitor
 
+import cloudant
+
 from dataheap2 import Agent, rpc_handler
 from dataheap2.logging import get_logger
 
@@ -26,7 +28,7 @@ click_completion.init()
 
 
 class Manager(Agent):
-    def __init__(self, management_url, data_url, config_path, queue_ttl):
+    def __init__(self, management_url, data_url, config_path, queue_ttl, couchdb_url, couchdb_user, couchdb_password):
         super().__init__('manager', management_url)
 
         self.management_queue_name = 'management'
@@ -45,6 +47,11 @@ class Manager(Agent):
 
         self.config_path = config_path
         self.queue_ttl = queue_ttl
+
+        self.couchdb_client = cloudant.client.CouchDB(couchdb_user, couchdb_password, url=couchdb_url, connect=True)
+        self.couchdb_session = self.couchdb_client.session()
+        self.couchdb_db_config = self.couchdb_client.create_database("config")#, throw_on_exists=False)
+        self.couchdb_db_metadata = self.couchdb_client.create_database("metadata")
 
     async def connect(self):
         await super().connect()
@@ -161,9 +168,12 @@ class Manager(Agent):
 @click.option('--queue-ttl', default=30 * 60 * 1000)
 @click.option('--config-path', default='.', type=click.Path(exists=True, file_okay=False, dir_okay=True))
 @click.option('--monitor/--no-monitor', default=True)
+@click.option('--couchdb-url', default='http://127.0.0.1:5984')
+@click.option('--couchdb-user', default='admin')
+@click.option('--couchdb-password', default='admin')
 @click_log.simple_verbosity_option(logger)
-def manager_cmd(rpc_url, data_url, config_path, queue_ttl, monitor):
-    manager = Manager(rpc_url, data_url, config_path, queue_ttl)
+def manager_cmd(rpc_url, data_url, config_path, queue_ttl, monitor, couchdb_url, couchdb_user, couchdb_password):
+    manager = Manager(rpc_url, data_url, config_path, queue_ttl, couchdb_url, couchdb_user, couchdb_password)
     if monitor:
         with aiomonitor.start_monitor(manager.event_loop, locals={'manager': manager}):
             manager.run()

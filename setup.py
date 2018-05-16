@@ -10,4 +10,4 @@ setup(name='dataheap2_manager',
       [console_scripts]
       dataheap2-manager=dataheap2_manager:manager_cmd
       ''',
-      install_requires=['aio-pika', 'aiomonitor', 'click', 'click-completion', 'click_log', 'colorama', 'dataheap2'])
+      install_requires=['aio-pika', 'aiomonitor', 'click', 'click-completion', 'click_log', 'colorama', 'dataheap2', 'cloudant'])
