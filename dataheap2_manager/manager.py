@@ -142,6 +142,8 @@ class Manager(Agent):
 
     @rpc_handler('source.metrics_list')
     async def handle_source_metadata(self, from_token, **body):
+        if "metrics" not in body:
+            return
         for metric in body['metrics']:
             cdb_data = {
                 "_id": metric,
