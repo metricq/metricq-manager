@@ -150,6 +150,14 @@ class Manager(Agent):
             }
             self.couchdb_db_metadata.create_document(cdb_data)
 
+    @rpc_handler('history.get_metric_list')
+    async def handle_http_get_metric_list(self, from_token, **body):
+        metric_list = self.couchdb_db_metadata.keys(remote=True)
+        response = {
+                   "metric_list": metric_list,
+        }
+        return response
+
 
     @rpc_handler('db.register')
     async def handle_db_register(self, from_token, **body):
