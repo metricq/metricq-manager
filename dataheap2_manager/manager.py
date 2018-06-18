@@ -120,14 +120,29 @@ class Manager(Agent):
 
     @rpc_handler('unsubscribe')
     async def handle_unsubscribe(self, from_token, **body):
+        channel = await self.data_connection.channel()
         queue_name = body['dataQueue']
         logger.debug('unbinding queue {} for {}', queue_name, from_token)
-        queue = await self.data_channel.declare_queue(queue_name, passive=True)
-        assert body['metrics']
-        await asyncio.wait([queue.unbind(exchange=self.data_exchange, routing_key=rk) for rk in body['metrics']],
-                           loop=self.event_loop)
-        await self.data_channel.default_exchange.publish(aio_pika.Message(body=b'', type='end'),
-                                                         routing_key=queue_name)
+
+        try:
+            queue = await channel.declare_queue(queue_name, passive=True)
+            assert body['metrics']
+            await asyncio.wait([queue.unbind(exchange=self.data_exchange, routing_key=rk) for rk in body['metrics']],
+                               loop=self.event_loop)
+            await self.data_channel.default_exchange.publish(aio_pika.Message(body=b'', type='end'),
+                                                             routing_key=queue_name)
+        except aio_pika.exceptions.ChannelClosed as e:
+            logger.error('unsubscribe failed, queue timed out: {}', e)
+            # Trying to avoid leaking closing futures. Super annoying
+            try:
+                await channel.closing
+            except aio_pika.exceptions.ChannelClosed:
+                pass
+            raise Exception("queue already timed out")
+
+        # TODO call_soon?
+        await channel.close()
+
         return {'dataServerAddress': self.data_url}
 
     @rpc_handler('release')
