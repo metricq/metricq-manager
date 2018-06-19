@@ -140,9 +140,7 @@ class Manager(Agent):
                 pass
             raise Exception("queue already timed out")
 
-        # TODO call_soon?
-        await channel.close()
-
+        self.event_loop.call_soon(channel.close)
         return {'dataServerAddress': self.data_url}
 
     @rpc_handler('release')
