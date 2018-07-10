@@ -11,6 +11,8 @@ import asyncio
 import aio_pika
 import aiomonitor
 
+import cloudant
+
 from dataheap2 import Agent, rpc_handler
 from dataheap2.logging import get_logger
 
@@ -26,7 +28,7 @@ click_completion.init()
 
 
 class Manager(Agent):
-    def __init__(self, management_url, data_url, config_path, queue_ttl):
+    def __init__(self, management_url, data_url, config_path, queue_ttl, couchdb_url, couchdb_user, couchdb_password):
         super().__init__('manager', management_url)
 
         self.management_queue_name = 'management'
@@ -45,6 +47,11 @@ class Manager(Agent):
 
         self.config_path = config_path
         self.queue_ttl = queue_ttl
+
+        self.couchdb_client = cloudant.client.CouchDB(couchdb_user, couchdb_password, url=couchdb_url, connect=True)
+        self.couchdb_session = self.couchdb_client.session()
+        self.couchdb_db_config = self.couchdb_client.create_database("config")#, throw_on_exists=False)
+        self.couchdb_db_metadata = self.couchdb_client.create_database("metadata")
 
         # TODO if this proves to be reliable, remove the option
         self._subscription_autodelete = True
@@ -78,8 +85,12 @@ class Manager(Agent):
         await self._management_consume([self.management_queue])
 
     def read_config(self, token):
-        with open(os.path.join(self.config_path, token + ".json"), 'r') as f:
-            return json.load(f)
+        try:
+            config_document = self.couchdb_db_config[token]
+            return dict(config_document)
+        except KeyError:
+            with open(os.path.join(self.config_path, token + ".json"), 'r') as f:
+                return json.load(f)
 
     async def rpc(self, function, response_callback, to_token=None, **kwargs):
         if to_token:
@@ -161,6 +172,25 @@ class Manager(Agent):
         }
         return response
 
+    @rpc_handler('source.metrics_list')
+    async def handle_source_metadata(self, from_token, **body):
+        if "metrics" not in body:
+            return
+        for metric in body['metrics']:
+            cdb_data = {
+                "_id": metric,
+            }
+            self.couchdb_db_metadata.create_document(cdb_data)
+
+    @rpc_handler('history.get_metric_list')
+    async def handle_http_get_metric_list(self, from_token, **body):
+        metric_list = self.couchdb_db_metadata.keys(remote=True)
+        response = {
+                   "metric_list": metric_list,
+        }
+        return response
+
+
     @rpc_handler('db.register')
     async def handle_db_register(self, from_token, **body):
         db_uuid = from_token
@@ -193,9 +223,12 @@ class Manager(Agent):
 @click.option('--queue-ttl', default=30 * 60 * 1000)
 @click.option('--config-path', default='.', type=click.Path(exists=True, file_okay=False, dir_okay=True))
 @click.option('--monitor/--no-monitor', default=True)
+@click.option('--couchdb-url', default='http://127.0.0.1:5984')
+@click.option('--couchdb-user', default='admin')
+@click.option('--couchdb-password', default='admin')
 @click_log.simple_verbosity_option(logger)
-def manager_cmd(rpc_url, data_url, config_path, queue_ttl, monitor):
-    manager = Manager(rpc_url, data_url, config_path, queue_ttl)
+def manager_cmd(rpc_url, data_url, config_path, queue_ttl, monitor, couchdb_url, couchdb_user, couchdb_password):
+    manager = Manager(rpc_url, data_url, config_path, queue_ttl, couchdb_url, couchdb_user, couchdb_password)
     if monitor:
         with aiomonitor.start_monitor(manager.event_loop, locals={'manager': manager}):
             manager.run()
