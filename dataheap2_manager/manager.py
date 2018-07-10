@@ -53,6 +53,11 @@ class Manager(Agent):
         self.couchdb_db_config = self.couchdb_client.create_database("config")#, throw_on_exists=False)
         self.couchdb_db_metadata = self.couchdb_client.create_database("metadata")
 
+        # TODO if this proves to be reliable, remove the option
+        self._subscription_autodelete = True
+        # TODO Make some config stuff
+        self._expires_seconds = 3600
+
     async def connect(self):
         await super().connect()
 
@@ -104,7 +109,18 @@ class Manager(Agent):
         # TODO figure out why auto-assigned queues cannot be used by the client
         queue_name = 'subscription-' + uuid.uuid4().hex
         logger.debug('attempting to declare queue {} for {}', queue_name, from_token)
-        queue = await self.data_channel.declare_queue(queue_name)
+
+        arguments = {}
+        try:
+            expires_seconds = body['expires']
+        except KeyError:
+            expires_seconds = self._expires_seconds
+        if expires_seconds:
+            arguments['x-expires'] = expires_seconds * 1000
+
+        queue = await self.data_channel.declare_queue(queue_name,
+                                                      auto_delete=self._subscription_autodelete,
+                                                      arguments=arguments)
         logger.debug('declared queue {} for {}', queue, from_token)
         if not body['metrics']:
             # TODO throw some error
@@ -115,21 +131,37 @@ class Manager(Agent):
 
     @rpc_handler('unsubscribe')
     async def handle_unsubscribe(self, from_token, **body):
+        channel = await self.data_connection.channel()
         queue_name = body['dataQueue']
         logger.debug('unbinding queue {} for {}', queue_name, from_token)
-        queue = await self.data_channel.declare_queue(queue_name)
-        assert body['metrics']
-        await asyncio.wait([queue.unbind(exchange=self.data_exchange, routing_key=rk) for rk in body['metrics']],
-                           loop=self.event_loop)
-        await self.data_channel.default_exchange.publish(aio_pika.Message(body=b'', type='end'),
-                                                         routing_key=queue_name)
+
+        try:
+            queue = await channel.declare_queue(queue_name, passive=True)
+            assert body['metrics']
+            await asyncio.wait([queue.unbind(exchange=self.data_exchange, routing_key=rk) for rk in body['metrics']],
+                               loop=self.event_loop)
+            await self.data_channel.default_exchange.publish(aio_pika.Message(body=b'', type='end'),
+                                                             routing_key=queue_name)
+        except aio_pika.exceptions.ChannelClosed as e:
+            logger.error('unsubscribe failed, queue timed out: {}', e)
+            # Trying to avoid leaking closing futures. Super annoying
+            try:
+                await channel.closing
+            except aio_pika.exceptions.ChannelClosed:
+                pass
+            raise Exception("queue already timed out")
+
+        self.event_loop.call_soon(channel.close)
         return {'dataServerAddress': self.data_url}
 
     @rpc_handler('release')
     async def handle_release(self, from_token, **body):
-        logger.debug('releasing {} for {}', body['dataQueue'], from_token)
-        queue = await self.data_channel.declare_queue(body['dataQueue'])
-        await queue.delete(if_unused=False, if_empty=False)
+        if self._subscription_autodelete:
+            logger.debug('release {} for {} ignored, auto-delete', body['dataQueue'], from_token)
+        else:
+            logger.debug('releasing {} for {}', body['dataQueue'], from_token)
+            queue = await self.data_channel.declare_queue(body['dataQueue'])
+            await queue.delete(if_unused=False, if_empty=False)
 
     @rpc_handler('source.register')
     async def handle_source_register(self, from_token, **body):
