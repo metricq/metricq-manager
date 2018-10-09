@@ -1,7 +1,5 @@
 # metricq
-# Copyright (C) 2018 ZIH,
-# Technische Universitaet Dresden,
-# Federal Republic of Germany
+# Copyright (C) 2018 ZIH, Technische Universitaet Dresden, Federal Republic of Germany
 #
 # All rights reserved.
 #
@@ -21,14 +19,14 @@
 # along with metricq.  If not, see <http://www.gnu.org/licenses/>.
 from setuptools import setup
 
-setup(name='dataheap2_manager',
+setup(name='metricq_manager',
       version='0.1',
       author='TU Dresden',
       python_requires=">=3.5",
-      packages=['dataheap2_manager'],
+      packages=['metricq_manager'],
       scripts=[],
       entry_points='''
       [console_scripts]
-      dataheap2-manager=dataheap2_manager:manager_cmd
+      metricq-manager=metricq_manager:manager_cmd
       ''',
-      install_requires=['aio-pika', 'aiomonitor', 'click', 'click-completion', 'click_log', 'colorama', 'dataheap2', 'cloudant'])
+      install_requires=['aio-pika', 'aiomonitor', 'click', 'click-completion', 'click_log', 'colorama', 'metricq', 'cloudant'])

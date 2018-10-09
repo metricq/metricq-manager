@@ -1,7 +1,5 @@
 # metricq
-# Copyright (C) 2018 ZIH,
-# Technische Universitaet Dresden,
-# Federal Republic of Germany
+# Copyright (C) 2018 ZIH, Technische Universitaet Dresden, Federal Republic of Germany
 #
 # All rights reserved.
 #
@@ -34,8 +32,8 @@ import aiomonitor
 
 import cloudant
 
-from dataheap2 import Agent, rpc_handler
-from dataheap2.logging import get_logger
+from metricq import Agent, rpc_handler
+from metricq.logging import get_logger
 
 logger = get_logger()
 
@@ -60,10 +58,10 @@ class Manager(Agent):
 
         self.data_url = data_url
 
-        self.data_exchange_name = 'dh2.data'
+        self.data_exchange_name = 'metricq.data'
         self.data_exchange = None
 
-        self.history_exchange_name = 'dh2.history'
+        self.history_exchange_name = 'metricq.history'
         self.history_exchange = None
 
         self.config_path = config_path
