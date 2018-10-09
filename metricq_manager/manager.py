@@ -202,6 +202,22 @@ class Manager(Agent):
             }
             self.couchdb_db_metadata.create_document(cdb_data)
 
+    @rpc_handler('history.register')
+    async def handle_history_register(self, from_token, **body):
+        history_uuid = from_token
+        history_queue_name = 'history-' + history_uuid
+        logger.debug('attempting to declare queue {} for {}', history_queue_name, from_token)
+        history_queue = await self.data_channel.declare_queue(history_queue_name)
+        logger.debug('declared queue {} for {}', history_queue, from_token)
+
+        response = {
+                   "historyServerAddress": self.data_url,
+                   "historyExchange": self.history_exchange.name,
+                   "historyQueue": history_queue_name,
+                   "config": self.read_config(from_token),
+        }
+        return response
+
     @rpc_handler('history.get_metric_list')
     async def handle_http_get_metric_list(self, from_token, **body):
         metric_list = self.couchdb_db_metadata.keys(remote=True)
