@@ -106,6 +106,7 @@ class Manager(Agent):
     def read_config(self, token):
         try:
             config_document = self.couchdb_db_config[token]
+            config_document.fetch()
             return dict(config_document)
         except KeyError:
             with open(os.path.join(self.config_path, token + ".json"), 'r') as f:
