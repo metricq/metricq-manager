@@ -204,6 +204,23 @@ class Manager(Agent):
             }
             self.couchdb_db_metadata.create_document(cdb_data)
 
+    @rpc_handler('source.declare_metrics')
+    async def handle_source_declare_metrics(self, from_token, **body):
+        if "metrics" not in body:
+            return
+        if isinstance(body["metrics"], list):
+            for metric in body["metrics"]:
+                cdb_data = {
+                    "_id": metric,
+                }
+                self.couchdb_db_metadata.create_document(cdb_data)
+        for metric, metadata in body['metrics'].items():
+            cdb_data = {
+                "_id": metric,
+            }
+            cdb_data.update({key: value for (key, value) in metadata.items() if not key.startswith("_")})
+            self.couchdb_db_metadata.create_document(cdb_data)
+
     @rpc_handler('history.register')
     async def handle_history_register(self, from_token, **body):
         history_uuid = from_token
