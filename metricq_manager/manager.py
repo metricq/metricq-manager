@@ -29,6 +29,7 @@ import click_log
 import asyncio
 import aio_pika
 import aiomonitor
+from yarl import URL
 
 import cloudant
 
@@ -57,6 +58,7 @@ class Manager(Agent):
         self.data_channel = None
 
         self.data_url = data_url
+        self.data_url_credentialfree =  str(URL(data_url).with_user(None))
 
         self.data_exchange_name = 'metricq.data'
         self.data_exchange = None
@@ -172,7 +174,7 @@ class Manager(Agent):
             raise Exception("queue already timed out")
 
         self.event_loop.call_soon(channel.close)
-        return {'dataServerAddress': self.data_url}
+        return {'dataServerAddress': self.data_url_credentialfree}
 
     @rpc_handler('release')
     async def handle_release(self, from_token, **body):
@@ -186,7 +188,7 @@ class Manager(Agent):
     @rpc_handler('source.register')
     async def handle_source_register(self, from_token, **body):
         response = {
-                   "dataServerAddress": self.data_url,
+                   "dataServerAddress": self.data_url_credentialfree,
                    "dataExchange": self.data_exchange.name,
                    "config": self.read_config(from_token),
         }
@@ -211,7 +213,7 @@ class Manager(Agent):
         logger.debug('declared queue {} for {}', history_queue, from_token)
 
         response = {
-                   "historyServerAddress": self.data_url,
+                   "historyServerAddress": self.data_url_credentialfree,
                    "historyExchange": self.history_exchange.name,
                    "historyQueue": history_queue_name,
                    "config": self.read_config(from_token),
@@ -245,7 +247,7 @@ class Manager(Agent):
             await data_queue.bind(exchange=self.data_exchange, routing_key=metric['name'])
 
         response = {
-                   "dataServerAddress": self.data_url,
+                   "dataServerAddress": self.data_url_credentialfree,
                    "dataQueue": data_queue_name,
                    "historyQueue": history_queue_name,
                    "config": self.read_config(from_token),
