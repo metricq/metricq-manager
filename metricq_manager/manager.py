@@ -281,8 +281,15 @@ class Manager(Agent):
 @click.option('--couchdb-url', default='http://127.0.0.1:5984')
 @click.option('--couchdb-user', default='admin')
 @click.option('--couchdb-password', default='admin')
+@click.option('--log-to-journal/--no-log-to-journal', default=False)
 @click_log.simple_verbosity_option(logger)
-def manager_cmd(rpc_url, data_url, config_path, queue_ttl, monitor, couchdb_url, couchdb_user, couchdb_password):
+def manager_cmd(rpc_url, data_url, config_path, queue_ttl, monitor, couchdb_url, couchdb_user, couchdb_password, log_to_journal):
+    if log_to_journal:
+        try:
+            from systemd import journal
+            logger.handlers[0] = journal.JournaldLogHandler()
+        except ImportError:
+            logger.error("Can't enable journal logger, systemd package not found!")
     manager = Manager(rpc_url, data_url, config_path, queue_ttl, couchdb_url, couchdb_user, couchdb_password)
     if monitor:
         with aiomonitor.start_monitor(manager.event_loop, locals={'manager': manager}):

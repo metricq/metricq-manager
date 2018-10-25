@@ -29,4 +29,7 @@ setup(name='metricq_manager',
       [console_scripts]
       metricq-manager=metricq_manager:manager_cmd
       ''',
-      install_requires=['aio-pika', 'aiomonitor', 'click', 'click-completion', 'click_log', 'colorama', 'metricq', 'cloudant', 'yarl'])
+      install_requires=['aio-pika', 'aiomonitor', 'click', 'click-completion', 'click_log', 'colorama', 'metricq', 'cloudant', 'yarl'],
+      extras_require = {
+          'journallogger':  ["systemd"]
+      })
