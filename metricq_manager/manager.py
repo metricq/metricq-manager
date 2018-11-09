@@ -69,10 +69,13 @@ class Manager(Agent):
         self.config_path = config_path
         self.queue_ttl = queue_ttl
 
-        self.couchdb_client = cloudant.client.CouchDB(couchdb_user, couchdb_password, url=couchdb_url, connect=True)
-        self.couchdb_session = self.couchdb_client.session()
-        self.couchdb_db_config = self.couchdb_client.create_database("config")#, throw_on_exists=False)
-        self.couchdb_db_metadata = self.couchdb_client.create_database("metadata")
+        try:
+            self.couchdb_client = cloudant.client.CouchDB(couchdb_user, couchdb_password, url=couchdb_url, connect=True)
+            self.couchdb_session = self.couchdb_client.session()
+            self.couchdb_db_config = self.couchdb_client.create_database("config")#, throw_on_exists=False)
+            self.couchdb_db_metadata = self.couchdb_client.create_database("metadata")
+        except:
+            self.couchdb_db_config = {}
 
         # TODO if this proves to be reliable, remove the option
         self._subscription_autodelete = True
