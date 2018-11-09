@@ -149,7 +149,7 @@ class Manager(Agent):
             assert False
         await asyncio.wait([queue.bind(exchange=self.data_exchange, routing_key=rk) for rk in body['metrics']],
                            loop=self.event_loop)
-        return {'dataQueue': queue.name, 'metrics': body['metrics']}
+        return {'dataServerAddress': self.data_url_credentialfree, 'dataQueue': queue.name, 'metrics': body['metrics']}
 
     @rpc_handler('unsubscribe')
     async def handle_unsubscribe(self, from_token, **body):
