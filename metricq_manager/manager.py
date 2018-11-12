@@ -69,13 +69,10 @@ class Manager(Agent):
         self.config_path = config_path
         self.queue_ttl = queue_ttl
 
-        try:
-            self.couchdb_client = cloudant.client.CouchDB(couchdb_user, couchdb_password, url=couchdb_url, connect=True)
-            self.couchdb_session = self.couchdb_client.session()
-            self.couchdb_db_config = self.couchdb_client.create_database("config")#, throw_on_exists=False)
-            self.couchdb_db_metadata = self.couchdb_client.create_database("metadata")
-        except:
-            self.couchdb_db_config = {}
+        self.couchdb_client = cloudant.client.CouchDB(couchdb_user, couchdb_password, url=couchdb_url, connect=True)
+        self.couchdb_session = self.couchdb_client.session()
+        self.couchdb_db_config = self.couchdb_client.create_database("config")#, throw_on_exists=False)
+        self.couchdb_db_metadata = self.couchdb_client.create_database("metadata")
 
         # TODO if this proves to be reliable, remove the option
         self._subscription_autodelete = True
@@ -197,7 +194,14 @@ class Manager(Agent):
         }
         return response
 
-    @rpc_handler('source.metrics_list')
+    @rpc_handler('transformer.register')
+    async def handle_transformer_register(self, from_token, **body):
+        response = await self.handle_source_register(from_token, **body)
+        # TODO implement some clever logic etc.
+        response['dataQueue'] = response['config']['dataQueue']
+        return response
+
+    @rpc_handler('source.metrics_list', 'transformer.metrics_list')
     async def handle_source_metadata(self, from_token, **body):
         if "metrics" not in body:
             return
@@ -207,7 +211,7 @@ class Manager(Agent):
             }
             self.couchdb_db_metadata.create_document(cdb_data)
 
-    @rpc_handler('source.declare_metrics')
+    @rpc_handler('source.declare_metrics', 'transformer.declare_metrics')
     async def handle_source_declare_metrics(self, from_token, **body):
         if "metrics" not in body:
             return
