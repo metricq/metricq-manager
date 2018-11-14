@@ -203,6 +203,7 @@ class Manager(Agent):
 
     @rpc_handler('source.metrics_list', 'transformer.metrics_list')
     async def handle_source_metadata(self, from_token, **body):
+        logger.warning('called deprecated source.metrics_list by {}', from_token)
         if "metrics" not in body:
             return
         for metric in body['metrics']:
@@ -246,12 +247,30 @@ class Manager(Agent):
 
     @rpc_handler('history.get_metric_list')
     async def handle_http_get_metric_list(self, from_token, **body):
+        logger.warning('called deprecated history.get_metric_list by {}', from_token)
         metric_list = self.couchdb_db_metadata.keys(remote=True)
         response = {
                    "metric_list": metric_list,
         }
         return response
 
+    @rpc_handler('history.get_metrics')
+    async def handle_http_get_metrics(self, from_token, **body):
+        try:
+            fmt = body['format']
+        except KeyError:
+            # default
+            fmt = 'array'
+
+        if fmt == 'array':
+            return {
+                "metrics": self.couchdb_db_metadata.keys(remote=True)
+            }
+        elif fmt == 'object':
+            # TODO implement
+            raise NotImplementedError("object format for get.metrics not yet supported")
+        else:
+            raise AttributeError("unknown format requested: {}".format(body['format']))
 
     @rpc_handler('db.register')
     async def handle_db_register(self, from_token, **body):
