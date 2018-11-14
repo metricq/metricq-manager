@@ -222,6 +222,8 @@ class Manager(Agent):
                     "_id": metric,
                 }
                 self.couchdb_db_metadata.create_document(cdb_data)
+            return
+
         for metric, metadata in body['metrics'].items():
             cdb_data = {
                 "_id": metric,
