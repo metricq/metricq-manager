@@ -126,7 +126,7 @@ class Manager(Agent):
 
         await self._rpc(function, response_callback, **kwargs)
 
-    @rpc_handler('subscribe')
+    @rpc_handler('subscribe', 'sink.subscribe')
     async def handle_subscribe(self, from_token, **body):
         # TODO figure out why auto-assigned queues cannot be used by the client
         queue_name = 'subscription-' + uuid.uuid4().hex
@@ -151,7 +151,7 @@ class Manager(Agent):
                            loop=self.event_loop)
         return {'dataServerAddress': self.data_url_credentialfree, 'dataQueue': queue.name, 'metrics': body['metrics']}
 
-    @rpc_handler('unsubscribe')
+    @rpc_handler('unsubscribe', 'sink.unsubscribe')
     async def handle_unsubscribe(self, from_token, **body):
         channel = await self.data_connection.channel()
         queue_name = body['dataQueue']
@@ -176,7 +176,7 @@ class Manager(Agent):
         self.event_loop.call_soon(channel.close)
         return {'dataServerAddress': self.data_url_credentialfree}
 
-    @rpc_handler('release')
+    @rpc_handler('release', 'sink.release')
     async def handle_release(self, from_token, **body):
         if self._subscription_autodelete:
             logger.debug('release {} for {} ignored, auto-delete', body['dataQueue'], from_token)
