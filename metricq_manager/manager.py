@@ -197,8 +197,20 @@ class Manager(Agent):
     @rpc_handler('transformer.register')
     async def handle_transformer_register(self, from_token, **body):
         response = await self.handle_source_register(from_token, **body)
-        # TODO implement some clever logic etc.
-        response['dataQueue'] = response['config']['dataQueue']
+
+        data_queue_name = 'data-' + from_token
+        logger.debug('attempting to declare queue {} for {}', data_queue_name, from_token)
+        data_queue = await self.data_channel.declare_queue(data_queue_name)
+        logger.debug('declared queue {} for {}', data_queue, from_token)
+
+        for entry in self.read_config(from_token)['metrics']:
+            # TODO more general readout :/
+            metric_id = entry["rawMetric"]
+            await data_queue.bind(exchange=self.data_exchange, routing_key=metric_id)
+
+        # TODO unbind other metrics that are no longer relevant
+
+        response['dataQueue'] = data_queue_name
         return response
 
     @rpc_handler('source.metrics_list', 'transformer.metrics_list')
@@ -290,6 +302,8 @@ class Manager(Agent):
         for metric in self.read_config(from_token)['metrics']:
             await history_queue.bind(exchange=self.history_exchange, routing_key=metric['name'])
             await data_queue.bind(exchange=self.data_exchange, routing_key=metric['name'])
+
+        # TODO unbind other metrics that are no longer relevant
 
         response = {
                    "dataServerAddress": self.data_url_credentialfree,
