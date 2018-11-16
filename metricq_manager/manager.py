@@ -203,9 +203,9 @@ class Manager(Agent):
         data_queue = await self.data_channel.declare_queue(data_queue_name)
         logger.debug('declared queue {} for {}', data_queue, from_token)
 
-        for entry in self.read_config(from_token)['metrics']:
+        for entry in self.read_config(from_token)['metrics'].values():
             # TODO more general readout :/
-            metric_id = entry["rawMetric"]
+            metric_id = entry['rawMetric']
             await data_queue.bind(exchange=self.data_exchange, routing_key=metric_id)
 
         # TODO unbind other metrics that are no longer relevant
