@@ -99,9 +99,9 @@ class Manager(Agent):
 
         logger.info("creating data exchanges")
         self.data_exchange = await self.data_channel.declare_exchange(
-            name=self.data_exchange_name, type=aio_pika.ExchangeType.TOPIC)
+            name=self.data_exchange_name, type=aio_pika.ExchangeType.TOPIC, durable=True)
         self.history_exchange = await self.data_channel.declare_exchange(
-            name=self.history_exchange_name, type=aio_pika.ExchangeType.TOPIC)
+            name=self.history_exchange_name, type=aio_pika.ExchangeType.TOPIC, durable=True)
 
         await self._management_consume([self.management_queue])
 
