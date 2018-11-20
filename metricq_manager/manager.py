@@ -276,9 +276,15 @@ class Manager(Agent):
             # default
             fmt = 'array'
 
+        if "selector" in body:
+            metrics = [doc['_id'] for doc in self.couchdb_db_metadata.get_query_result({'_id': {'$regex': body['selector']}})]
+        else:
+            metrics = self.couchdb_db_metadata.keys(remote=True)
+
+
         if fmt == 'array':
             return {
-                "metrics": self.couchdb_db_metadata.keys(remote=True)
+                "metrics": metrics
             }
         elif fmt == 'object':
             # TODO implement
