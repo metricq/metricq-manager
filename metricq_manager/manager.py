@@ -129,7 +129,10 @@ class Manager(Agent):
     @rpc_handler('subscribe', 'sink.subscribe')
     async def handle_subscribe(self, from_token, **body):
         # TODO figure out why auto-assigned queues cannot be used by the client
-        queue_name = 'subscription-' + uuid.uuid4().hex
+        try:
+            queue_name = body['dataQueue']
+        except KeyError:
+            queue_name = 'subscription-' + uuid.uuid4().hex
         logger.debug('attempting to declare queue {} for {}', queue_name, from_token)
 
         arguments = {}
@@ -144,12 +147,16 @@ class Manager(Agent):
                                                       auto_delete=self._subscription_autodelete,
                                                       arguments=arguments)
         logger.debug('declared queue {} for {}', queue, from_token)
-        if not body['metrics']:
-            # TODO throw some error
-            assert False
-        await asyncio.wait([queue.bind(exchange=self.data_exchange, routing_key=rk) for rk in body['metrics']],
-                           loop=self.event_loop)
-        return {'dataServerAddress': self.data_url_credentialfree, 'dataQueue': queue.name, 'metrics': body['metrics']}
+        try:
+            metrics = body['metrics']
+            if len(metrics) > 0:
+                await asyncio.wait([queue.bind(exchange=self.data_exchange, routing_key=rk) for rk in metrics],
+                                   loop=self.event_loop)
+        except KeyError:
+            logger.warn('Got no metric list, assuming no metrics')
+            metrics = []
+
+        return {'dataServerAddress': self.data_url_credentialfree, 'dataQueue': queue.name, 'metrics': metrics}
 
     @rpc_handler('unsubscribe', 'sink.unsubscribe')
     async def handle_unsubscribe(self, from_token, **body):
@@ -162,8 +169,9 @@ class Manager(Agent):
             assert body['metrics']
             await asyncio.wait([queue.unbind(exchange=self.data_exchange, routing_key=rk) for rk in body['metrics']],
                                loop=self.event_loop)
-            await self.data_channel.default_exchange.publish(aio_pika.Message(body=b'', type='end'),
-                                                             routing_key=queue_name)
+            if body.get('end', False):
+                await self.data_channel.default_exchange.publish(aio_pika.Message(body=b'', type='end'),
+                                                                 routing_key=queue_name)
         except aio_pika.exceptions.ChannelClosed as e:
             logger.error('unsubscribe failed, queue timed out: {}', e)
             # Trying to avoid leaking closing futures. Super annoying
