@@ -94,7 +94,7 @@ class Manager(Agent):
         await self.management_queue.bind(exchange=self._management_exchange, routing_key="#")
 
         logger.info("establishing data connection to {}", self.data_url)
-        self.data_connection = await self._connect(self.data_url)
+        self.data_connection = await self.make_connection(self.data_url)
         self.data_channel = await self.data_connection.channel()
 
         logger.info("creating data exchanges")
@@ -103,7 +103,17 @@ class Manager(Agent):
         self.history_exchange = await self.data_channel.declare_exchange(
             name=self.history_exchange_name, type=aio_pika.ExchangeType.TOPIC, durable=True)
 
-        await self._management_consume([self.management_queue])
+        await self.rpc_consume([self.management_queue])
+
+    async def stop(self):
+        logger.debug('closing data channel and connection in manager')
+        if self.data_channel:
+            self.data_channel.close()
+            self.data_channel = None
+        if self.data_connection:
+            self.data_connection.close()
+            self.data_connection = None
+        await super().stop()
 
     def read_config(self, token):
         try:
@@ -114,7 +124,7 @@ class Manager(Agent):
             with open(os.path.join(self.config_path, token + ".json"), 'r') as f:
                 return json.load(f)
 
-    async def rpc(self, function, response_callback, to_token=None, **kwargs):
+    async def rpc(self, function, to_token=None, **kwargs):
         if to_token:
             kwargs['exchange'] = self._management_channel.default_exchange
             kwargs['routing_key'] = '{}-rpc'.format(to_token)
@@ -124,7 +134,7 @@ class Manager(Agent):
             kwargs['routing_key'] = function
             kwargs['cleanup_on_response'] = False
 
-        await self._rpc(function, response_callback, **kwargs)
+        await self.rpc(function=function, **kwargs)
 
     @rpc_handler('subscribe', 'sink.subscribe')
     async def handle_subscribe(self, from_token, **body):
