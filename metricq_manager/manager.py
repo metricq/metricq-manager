@@ -147,8 +147,10 @@ class Manager(Agent):
 
         arguments = {}
         try:
-            expires_seconds = body['expires']
-        except KeyError:
+            expires_seconds = int(body['expires'])
+            if expires_seconds <= 0:
+                expires_seconds = self._expires_seconds
+        except (KeyError, ValueError, TypeError):
             expires_seconds = self._expires_seconds
         if expires_seconds:
             arguments['x-expires'] = expires_seconds * 1000
