@@ -218,9 +218,16 @@ class Manager(Agent):
     async def handle_transformer_register(self, from_token, **body):
         response = await self.handle_source_register(from_token, **body)
 
+        arguments = dict()
+        try:
+             arguments['message-ttl'] = int(1000 * response['config']['messageTtl'])
+        except KeyError:
+            # No TTL set
+            pass
+
         data_queue_name = 'data-' + from_token
         logger.debug('attempting to declare queue {} for {}', data_queue_name, from_token)
-        data_queue = await self.data_channel.declare_queue(data_queue_name)
+        data_queue = await self.data_channel.declare_queue(data_queue_name, durable=True, arguments=arguments)
         logger.debug('declared queue {} for {}', data_queue, from_token)
 
         for entry in self.read_config(from_token)['metrics'].values():
