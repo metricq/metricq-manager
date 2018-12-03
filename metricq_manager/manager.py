@@ -58,7 +58,7 @@ class Manager(Agent):
         self.data_channel = None
 
         self.data_url = data_url
-        self.data_url_credentialfree =  str(URL(data_url).with_user(None))
+        self.data_url_credentialfree = str(URL(data_url).with_user(None))
 
         self.data_exchange_name = 'metricq.data'
         self.data_exchange = None
