@@ -220,7 +220,7 @@ class Manager(Agent):
 
         arguments = dict()
         try:
-             arguments['message-ttl'] = int(1000 * response['config']['messageTtl'])
+             arguments['x-message-ttl'] = int(1000 * response['config']['messageTtl'])
         except KeyError:
             # No TTL set
             pass
