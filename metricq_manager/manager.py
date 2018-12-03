@@ -301,7 +301,6 @@ class Manager(Agent):
         else:
             metrics = self.couchdb_db_metadata.keys(remote=True)
 
-
         if fmt == 'array':
             return {
                 "metrics": metrics
