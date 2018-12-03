@@ -317,12 +317,12 @@ class Manager(Agent):
         db_uuid = from_token
         history_queue_name = 'history-' + db_uuid
         logger.debug('attempting to declare queue {} for {}', history_queue_name, from_token)
-        history_queue = await self.data_channel.declare_queue(history_queue_name)
+        history_queue = await self.data_channel.declare_queue(history_queue_name, durable=True)
         logger.debug('declared queue {} for {}', history_queue, from_token)
 
         data_queue_name = 'data-' + db_uuid
         logger.debug('attempting to declare queue {} for {}', data_queue_name, from_token)
-        data_queue = await self.data_channel.declare_queue(data_queue_name)
+        data_queue = await self.data_channel.declare_queue(data_queue_name, durable=True)
         logger.debug('declared queue {} for {}', data_queue, from_token)
 
         for metric in self.read_config(from_token)['metrics']:
