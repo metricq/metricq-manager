@@ -181,7 +181,7 @@ class Manager(Agent):
             assert body['metrics']
             await asyncio.wait([queue.unbind(exchange=self.data_exchange, routing_key=rk) for rk in body['metrics']],
                                loop=self.event_loop)
-            if body.get('end', False):
+            if body.get('end', True):
                 await self.data_channel.default_exchange.publish(aio_pika.Message(body=b'', type='end'),
                                                                  routing_key=queue_name)
         except aio_pika.exceptions.ChannelClosed as e:
