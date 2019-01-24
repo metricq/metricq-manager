@@ -83,7 +83,8 @@ class Manager(Agent):
         await super().connect()
 
         # TODO persistent?
-        self.management_queue = await self._management_channel.declare_queue(self.management_queue_name, durable=True)
+        self.management_queue = await self._management_channel.declare_queue(self.management_queue_name,
+                                                                             durable=True, robust=True)
 
         logger.info('creating rpc exchanges')
         self._management_exchange = await self._management_channel.declare_exchange(
@@ -157,7 +158,7 @@ class Manager(Agent):
 
         queue = await self.data_channel.declare_queue(queue_name,
                                                       auto_delete=self._subscription_autodelete,
-                                                      arguments=arguments)
+                                                      arguments=arguments, robust=False)
         logger.debug('declared queue {} for {}', queue, from_token)
         try:
             metrics = body['metrics']
@@ -177,7 +178,7 @@ class Manager(Agent):
         logger.debug('unbinding queue {} for {}', queue_name, from_token)
 
         try:
-            queue = await channel.declare_queue(queue_name, passive=True)
+            queue = await channel.declare_queue(queue_name, passive=True, robust=False)
             assert body['metrics']
             await asyncio.wait([queue.unbind(exchange=self.data_exchange, routing_key=rk) for rk in body['metrics']],
                                loop=self.event_loop)
@@ -202,7 +203,7 @@ class Manager(Agent):
             logger.debug('release {} for {} ignored, auto-delete', body['dataQueue'], from_token)
         else:
             logger.debug('releasing {} for {}', body['dataQueue'], from_token)
-            queue = await self.data_channel.declare_queue(body['dataQueue'])
+            queue = await self.data_channel.declare_queue(body['dataQueue'], robust=False)
             await queue.delete(if_unused=False, if_empty=False)
 
     @rpc_handler('source.register')
@@ -227,7 +228,8 @@ class Manager(Agent):
 
         data_queue_name = 'data-' + from_token
         logger.debug('attempting to declare queue {} for {}', data_queue_name, from_token)
-        data_queue = await self.data_channel.declare_queue(data_queue_name, durable=True, arguments=arguments)
+        data_queue = await self.data_channel.declare_queue(data_queue_name, durable=True,
+                                                           arguments=arguments, robust=False)
         logger.debug('declared queue {} for {}', data_queue, from_token)
 
         for entry in self.read_config(from_token)['metrics'].values():
@@ -275,7 +277,7 @@ class Manager(Agent):
         history_uuid = from_token
         history_queue_name = 'history-' + history_uuid
         logger.debug('attempting to declare queue {} for {}', history_queue_name, from_token)
-        history_queue = await self.data_channel.declare_queue(history_queue_name)
+        history_queue = await self.data_channel.declare_queue(history_queue_name, robust=False)
         logger.debug('declared queue {} for {}', history_queue, from_token)
 
         response = {
@@ -323,12 +325,12 @@ class Manager(Agent):
         db_uuid = from_token
         history_queue_name = 'history-' + db_uuid
         logger.debug('attempting to declare queue {} for {}', history_queue_name, from_token)
-        history_queue = await self.data_channel.declare_queue(history_queue_name, durable=True)
+        history_queue = await self.data_channel.declare_queue(history_queue_name, durable=True, robust=False)
         logger.debug('declared queue {} for {}', history_queue, from_token)
 
         data_queue_name = 'data-' + db_uuid
         logger.debug('attempting to declare queue {} for {}', data_queue_name, from_token)
-        data_queue = await self.data_channel.declare_queue(data_queue_name, durable=True)
+        data_queue = await self.data_channel.declare_queue(data_queue_name, durable=True, robust=False)
         logger.debug('declared queue {} for {}', data_queue, from_token)
 
         for metric in self.read_config(from_token)['metrics']:
