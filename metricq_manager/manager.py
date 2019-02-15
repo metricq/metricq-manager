@@ -138,7 +138,7 @@ class Manager(Agent):
         await self.rpc(function=function, **kwargs)
 
     @rpc_handler('subscribe', 'sink.subscribe')
-    async def handle_subscribe(self, from_token, **body):
+    async def handle_subscribe(self, from_token, metadata=True, **body):
         # TODO figure out why auto-assigned queues cannot be used by the client
         try:
             queue_name = body['dataQueue']
@@ -168,6 +168,10 @@ class Manager(Agent):
         except KeyError:
             logger.warn('Got no metric list, assuming no metrics')
             metrics = []
+
+        if metadata:
+            metric_ids = metrics
+            metrics = {metric: self.couchdb_db_metadata[metric] for metric in metric_ids}
 
         return {'dataServerAddress': self.data_url_credentialfree, 'dataQueue': queue.name, 'metrics': metrics}
 
