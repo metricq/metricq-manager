@@ -270,11 +270,20 @@ class Manager(Agent):
             return
 
         for metric, metadata in body['metrics'].items():
-            cdb_data = {
-                "_id": metric,
-            }
-            cdb_data.update({key: value for (key, value) in metadata.items() if not key.startswith("_")})
-            self.couchdb_db_metadata.create_document(cdb_data)
+            try:
+                doc = self.couchdb_db_metadata[metric]
+                for key, value in metadata.items():
+                    if not key.startswith("_"):
+                        doc[key] = value
+                # TODO only save if something actually changed
+                doc.save()
+            except KeyError:
+                cdb_data = {
+                    "_id": metric,
+                }
+                cdb_data.update({key: value for (key, value) in metadata.items() if not key.startswith("_")})
+                self.couchdb_db_metadata.create_document(cdb_data)
+
 
     @rpc_handler('history.register')
     async def handle_history_register(self, from_token, **body):
