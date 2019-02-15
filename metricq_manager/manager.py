@@ -304,21 +304,24 @@ class Manager(Agent):
         except KeyError:
             # default
             fmt = 'array'
-
-        if "selector" in body:
-            metrics = [doc['_id'] for doc in self.couchdb_db_metadata.get_query_result({'_id': {'$regex': body['selector']}})]
-        else:
-            metrics = self.couchdb_db_metadata.keys(remote=True)
-
-        if fmt == 'array':
-            return {
-                "metrics": metrics
-            }
-        elif fmt == 'object':
-            # TODO implement
-            raise NotImplementedError("object format for get.metrics not yet supported")
-        else:
+        if fmt not in ('array', 'object'):
             raise AttributeError("unknown format requested: {}".format(body['format']))
+
+        # TODO can this be unified without compromising performance?
+        # Does this even perform well?
+        if "selector" in body:
+            result = self.couchdb_db_metadata.get_query_result({'_id': {'$regex': body['selector']}})
+            if fmt == 'array':
+                metrics = [doc['_id'] for doc in result]
+            if fmt == 'object':
+                metrics = {doc['_id']: doc for doc in result}
+        else:
+            if fmt == 'array':
+                metrics = self.couchdb_db_metadata.keys(remote=True)
+            if fmt == 'object':
+                metrics = {doc['_id']: doc for doc in self.couchdb_db_metadata}
+
+        return {"metrics": metrics}
 
     @rpc_handler('db.register')
     async def handle_db_register(self, from_token, **body):
