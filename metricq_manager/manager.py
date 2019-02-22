@@ -226,10 +226,14 @@ class Manager(Agent):
     @rpc_handler('transformer.register')
     async def handle_transformer_register(self, from_token, **body):
         response = await self.handle_source_register(from_token, **body)
+        return response
 
+    @rpc_handler('transformer.subscribe')
+    async def handle_transformer_subscribe(self, from_token, metrics, **body):
+        config = self.read_config(from_token)
         arguments = dict()
         try:
-            arguments['x-message-ttl'] = int(1000 * response['config']['messageTtl'])
+            arguments['x-message-ttl'] = int(1000 * config['messageTtl'])
         except KeyError:
             # No TTL set
             pass
@@ -240,18 +244,17 @@ class Manager(Agent):
                                                            arguments=arguments, robust=False)
         logger.debug('declared queue {} for {}', data_queue, from_token)
 
-        metric_ids = []
-        for entry in self.read_config(from_token)['metrics'].values():
-            # TODO more general readout :/
-            metric_id = entry['rawMetric']
-            metric_ids.append(metric_id)
+        for metric in metrics:
             # TODO bundle bind operations in asyncio.wait
-            await data_queue.bind(exchange=self.data_exchange, routing_key=metric_id)
+            await data_queue.bind(exchange=self.data_exchange, routing_key=metric)
 
         # TODO unbind other metrics that are no longer relevant
-        response['metrics'] = await self.fetch_metadata(metric_ids)
+        response = dict()
+        response['dataServerAddress'] = self.data_url_credentialfree
         response['dataQueue'] = data_queue_name
+        response['metrics'] = await self.fetch_metadata(metrics)
         return response
+
 
     @rpc_handler('source.metrics_list', 'transformer.metrics_list')
     async def handle_source_metadata(self, from_token, **body):
