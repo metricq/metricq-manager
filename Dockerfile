@@ -22,4 +22,4 @@ COPY --chown=metricq:metricq . /home/metricq/manager
 WORKDIR /home/metricq/manager
 RUN . /home/metricq/venv/bin/activate && pip install .
 
-CMD /home/metricq/venv/bin/metricq-manager /home/metricq/manager/config --config-path --couchdb-url $couchdb_url --couchdb-user $couchdb_user --couchdb-password $couchdb_pw $rpc_url $data_url
+CMD /home/metricq/venv/bin/metricq-manager --config-path /home/metricq/manager/config --couchdb-url $couchdb_url --couchdb-user $couchdb_user --couchdb-password $couchdb_pw $rpc_url $data_url
