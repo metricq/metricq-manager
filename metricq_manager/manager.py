@@ -295,6 +295,7 @@ class Manager(Agent):
 
         response = {
                    "historyServerAddress": self.data_url_credentialfree,
+                   "dataServerAddress": self.data_url_credentialfree,
                    "historyExchange": self.history_exchange.name,
                    "historyQueue": history_queue_name,
                    "config": self.read_config(from_token),
