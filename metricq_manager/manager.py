@@ -79,6 +79,10 @@ class Manager(Agent):
         # TODO Make some config stuff
         self._expires_seconds = 3600
 
+    async def fetch_metadata(self, metric_ids):
+        """ This is async in case we ever make asynchronous couchdb requests """
+        return {metric: self.couchdb_db_metadata[metric] for metric in metric_ids}
+
     async def connect(self):
         await super().connect()
 
@@ -171,7 +175,7 @@ class Manager(Agent):
 
         if metadata:
             metric_ids = metrics
-            metrics = {metric: self.couchdb_db_metadata[metric] for metric in metric_ids}
+            metrics = await self.fetch_metadata(metric_ids)
 
         return {'dataServerAddress': self.data_url_credentialfree, 'dataQueue': queue.name, 'metrics': metrics}
 
@@ -236,13 +240,16 @@ class Manager(Agent):
                                                            arguments=arguments, robust=False)
         logger.debug('declared queue {} for {}', data_queue, from_token)
 
+        metric_ids = []
         for entry in self.read_config(from_token)['metrics'].values():
             # TODO more general readout :/
             metric_id = entry['rawMetric']
+            metric_ids.append(metric_id)
+            # TODO bundle bind operations in asyncio.wait
             await data_queue.bind(exchange=self.data_exchange, routing_key=metric_id)
 
         # TODO unbind other metrics that are no longer relevant
-
+        response['metrics'] = await self.fetch_metadata(metric_ids)
         response['dataQueue'] = data_queue_name
         return response
 
