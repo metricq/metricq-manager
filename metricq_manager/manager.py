@@ -298,7 +298,8 @@ class Manager(Agent):
                     metrics_updated += 1
                     if metric != row['id']:
                         logger.error('inconsistent key/id while updating metadata {} != {}', metric, row['id'])
-                    document['_rev'] = row['value']['rev']
+                    if 'deleted' not in row['value']:
+                        document['_rev'] = row['value']['rev']
                 except KeyError:
                     logger.error('something went wrong trying to update existing metadata document {}', metric)
                     raise
