@@ -121,10 +121,10 @@ class Manager(Agent):
     async def stop(self):
         logger.debug('closing data channel and connection in manager')
         if self.data_channel:
-            self.data_channel.close()
+            await self.data_channel.close()
             self.data_channel = None
         if self.data_connection:
-            self.data_connection.close()
+            await self.data_connection.close()
             self.data_connection = None
         await super().stop()
 
@@ -210,8 +210,9 @@ class Manager(Agent):
                 pass
             raise Exception("queue already timed out")
 
-        self.event_loop.call_soon(channel.close)
         metrics = await self.fetch_metadata(body['metrics'])
+
+        self.event_loop.call_soon(asyncio.ensure_future, channel.close())
         return {'dataServerAddress': self.data_url_credentialfree, 'dataQueue': queue_name, 'metrics': metrics}
 
     @rpc_handler('release', 'sink.release')
