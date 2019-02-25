@@ -319,7 +319,7 @@ class Manager(Agent):
             if 'error' in s:
                 error = True
                 logger.error('error updating metadata {}', s)
-        logger.info('metadata update took {} for {} new and {} existing metrics',
+        logger.info('metadata update took {0:.3f} s for {} new and {} existing metrics',
                     end-start, metrics_new, metrics_updated)
         if error:
             raise RuntimeError('metadata update failed')
