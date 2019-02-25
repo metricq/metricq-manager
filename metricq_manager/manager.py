@@ -17,6 +17,8 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with metricq.  If not, see <http://www.gnu.org/licenses/>.
+import datetime
+import time
 import json
 import os
 import uuid
@@ -264,40 +266,62 @@ class Manager(Agent):
     @rpc_handler('source.metrics_list', 'transformer.metrics_list')
     async def handle_source_metadata(self, from_token, **body):
         logger.warning('called deprecated source.metrics_list by {}', from_token)
-        if "metrics" not in body:
-            return
-        for metric in body['metrics']:
-            cdb_data = {
-                "_id": metric,
-            }
-            self.couchdb_db_metadata.create_document(cdb_data)
+        self.handle_source_declare_metrics(from_token, **body)
 
     @rpc_handler('source.declare_metrics', 'transformer.declare_metrics')
-    async def handle_source_declare_metrics(self, from_token, **body):
-        if "metrics" not in body:
-            return
-        if isinstance(body["metrics"], list):
-            for metric in body["metrics"]:
-                cdb_data = {
-                    "_id": metric,
-                }
-                self.couchdb_db_metadata.create_document(cdb_data)
+    async def handle_source_declare_metrics(self, from_token, metrics=None, **body):
+        if metrics is None:
+            logger.warning('client {} called declare_metrics without metrics')
             return
 
-        for metric, metadata in body['metrics'].items():
-            try:
-                doc = self.couchdb_db_metadata[metric]
-                for key, value in metadata.items():
-                    if not key.startswith("_"):
-                        doc[key] = value
-                # TODO only save if something actually changed
-                doc.save()
-            except KeyError:
-                cdb_data = {
-                    "_id": metric,
-                }
-                cdb_data.update({key: value for (key, value) in metadata.items() if not key.startswith("_")})
-                self.couchdb_db_metadata.create_document(cdb_data)
+        # Convert metrics list to simple dict
+        if isinstance(metrics, list):
+            metrics = {metric: {} for metric in metrics}
+
+        metrics_new = 0
+        metrics_updated = 0
+
+        def update_doc(row):
+            nonlocal metrics_new, metrics_updated, metrics
+            metric = row['key']
+            document = metrics[metric]
+
+            for key in list(document.keys()):
+                if key.startswith('_'):
+                    del document[key]
+
+            document['_id'] = metric
+            if 'date' not in document:
+                document['date'] = datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc).isoformat()
+            if 'id' in row:
+                try:
+                    metrics_updated += 1
+                    if metric != row['id']:
+                        logger.error('inconsistent key/id while updating metadata {} != {}', metric, row['id'])
+                    document['_rev'] = row['value']['rev']
+                except KeyError:
+                    logger.error('something went wrong trying to update existing metadata document {}', metric)
+                    raise
+            else:
+                metrics_new += 1
+            return document
+
+        start = time.time()
+        docs = self.couchdb_db_metadata.all_docs(keys=list(metrics.keys()))
+        new_docs = [update_doc(row) for row in docs['rows']]
+        status = self.couchdb_db_metadata.bulk_docs(new_docs)
+        end = time.time()
+        if len(status) != len(metrics):
+            logger.error('metadata update mismatch in metrics count expected {}, actual {}', len(metrics), len(status))
+        error = False
+        for s in status:
+            if 'error' in s:
+                error = True
+                logger.error('error updating metadata {}', s)
+        logger.info('metadata update took {} for {} new and {} existing metrics',
+                    end-start, metrics_new, metrics_updated)
+        if error:
+            raise RuntimeError('metadata update failed')
 
     @rpc_handler('history.register')
     async def handle_history_register(self, from_token, **body):
