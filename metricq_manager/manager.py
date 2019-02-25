@@ -211,7 +211,8 @@ class Manager(Agent):
             raise Exception("queue already timed out")
 
         self.event_loop.call_soon(channel.close)
-        return {'dataServerAddress': self.data_url_credentialfree, 'dataQueue': queue_name}
+        metrics = await self.fetch_metadata(body['metrics'])
+        return {'dataServerAddress': self.data_url_credentialfree, 'dataQueue': queue_name, 'metrics': metrics}
 
     @rpc_handler('release', 'sink.release')
     async def handle_release(self, from_token, **body):
