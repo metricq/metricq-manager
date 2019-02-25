@@ -261,7 +261,6 @@ class Manager(Agent):
         response['metrics'] = await self.fetch_metadata(metrics)
         return response
 
-
     @rpc_handler('source.metrics_list', 'transformer.metrics_list')
     async def handle_source_metadata(self, from_token, **body):
         logger.warning('called deprecated source.metrics_list by {}', from_token)
@@ -299,7 +298,6 @@ class Manager(Agent):
                 }
                 cdb_data.update({key: value for (key, value) in metadata.items() if not key.startswith("_")})
                 self.couchdb_db_metadata.create_document(cdb_data)
-
 
     @rpc_handler('history.register')
     async def handle_history_register(self, from_token, **body):
