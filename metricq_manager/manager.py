@@ -81,7 +81,13 @@ class Manager(Agent):
 
     async def fetch_metadata(self, metric_ids):
         """ This is async in case we ever make asynchronous couchdb requests """
-        return {metric: self.couchdb_db_metadata[metric] for metric in metric_ids}
+        metadata = dict()
+        for metric in metric_ids:
+            try:
+                metadata[metric] = self.couchdb_db_metadata[metric]
+            except KeyError:
+                metadata[metric] = {'error': 'no metadata provided for {}'.format(metric)}
+        return metadata
 
     async def connect(self):
         await super().connect()
