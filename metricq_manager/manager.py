@@ -398,10 +398,12 @@ class Manager(Agent):
         # TODO unbind other metrics that are no longer relevant
 
         response = {
-                   "dataServerAddress": self.data_url_credentialfree,
-                   "dataQueue": data_queue_name,
-                   "historyQueue": history_queue_name,
-                   "config": self.read_config(from_token),
+                   'dataServerAddress': self.data_url_credentialfree,
+                   'dataQueue': data_queue_name,
+                   'historyQueue': history_queue_name,
+                   'config': self.read_config(from_token),
+                   'metrics': await self.fetch_metadata(metrics),
+
         }
         return response
 
