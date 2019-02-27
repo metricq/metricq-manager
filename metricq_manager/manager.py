@@ -391,7 +391,8 @@ class Manager(Agent):
         data_queue = await self.data_channel.declare_queue(data_queue_name, durable=True, robust=False)
         logger.debug('declared queue {} for {}', data_queue, from_token)
 
-        metrics = self.read_config(from_token)['metrics']
+        config = self.read_config(from_token)
+        metrics = config['metrics']
 
         for metric in metrics:
             await history_queue.bind(exchange=self.history_exchange, routing_key=metric['name'])
@@ -400,12 +401,11 @@ class Manager(Agent):
         # TODO unbind other metrics that are no longer relevant
 
         response = {
-                   'dataServerAddress': self.data_url_credentialfree,
-                   'dataQueue': data_queue_name,
-                   'historyQueue': history_queue_name,
-                   'config': self.read_config(from_token),
-                   'metrics': await self.fetch_metadata(metrics),
-
+           'dataServerAddress': self.data_url_credentialfree,
+           'dataQueue': data_queue_name,
+           'historyQueue': history_queue_name,
+           'config': config,
+           'metrics': await self.fetch_metadata([metric['name'] for metric in metrics]),
         }
         return response
 
