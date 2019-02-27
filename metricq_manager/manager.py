@@ -391,7 +391,9 @@ class Manager(Agent):
         data_queue = await self.data_channel.declare_queue(data_queue_name, durable=True, robust=False)
         logger.debug('declared queue {} for {}', data_queue, from_token)
 
-        for metric in self.read_config(from_token)['metrics']:
+        metrics = self.read_config(from_token)['metrics']
+
+        for metric in metrics:
             await history_queue.bind(exchange=self.history_exchange, routing_key=metric['name'])
             await data_queue.bind(exchange=self.data_exchange, routing_key=metric['name'])
 
