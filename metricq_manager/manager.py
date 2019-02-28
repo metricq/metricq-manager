@@ -331,7 +331,7 @@ class Manager(Agent):
         history_uuid = from_token
         history_queue_name = 'history-' + history_uuid
         logger.debug('attempting to declare queue {} for {}', history_queue_name, from_token)
-        history_queue = await self.data_channel.declare_queue(history_queue_name, robust=False)
+        history_queue = await self.data_channel.declare_queue(history_queue_name, auto_delete=True, robust=False)
         logger.debug('declared queue {} for {}', history_queue, from_token)
 
         response = {
