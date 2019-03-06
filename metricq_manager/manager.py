@@ -17,6 +17,7 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with metricq.  If not, see <http://www.gnu.org/licenses/>.
+
 import datetime
 import time
 import json
@@ -364,6 +365,7 @@ class Manager(Agent):
 
         # TODO can this be unified without compromising performance?
         # Does this even perform well?
+        # ALSO: Async :-[
         if "selector" in body:
             result = self.couchdb_db_metadata.get_query_result({'_id': {'$regex': body['selector']}})
             if fmt == 'array':
@@ -379,7 +381,7 @@ class Manager(Agent):
         return {"metrics": metrics}
 
     @rpc_handler('db.register')
-    async def handle_db_register(self, from_token, **body):
+    async def handle_db_register(self, from_token, metadata=False, **body):
         db_uuid = from_token
         history_queue_name = 'history-' + db_uuid
         logger.debug('attempting to declare queue {} for {}', history_queue_name, from_token)
@@ -392,11 +394,25 @@ class Manager(Agent):
         logger.debug('declared queue {} for {}', data_queue, from_token)
 
         config = self.read_config(from_token)
-        metrics = config['metrics']
+        metric_configs = config['metrics']
 
-        for metric in metrics:
-            await history_queue.bind(exchange=self.history_exchange, routing_key=metric['name'])
-            await data_queue.bind(exchange=self.data_exchange, routing_key=metric['name'])
+        if isinstance(metric_configs, list):
+            # old legacy mode
+            metric_names = routing_keys = [metric['name'] for metric in metric_configs]
+        else:
+            routing_keys = []
+            metric_names = []
+            for name, metric_config in metric_configs.items():
+                if 'prefix' in metric_config and metric_config['prefix']:
+                    routing_keys.append(name + ".#")
+                    # TODO fetch pattern from DB
+                else:
+                    routing_keys.append(name)
+                    metric_names.append(name)
+
+        for routing_key in routing_keys:
+            await history_queue.bind(exchange=self.history_exchange, routing_key=routing_key)
+            await data_queue.bind(exchange=self.data_exchange, routing_key=routing_key)
 
         # TODO unbind other metrics that are no longer relevant
 
@@ -405,8 +421,9 @@ class Manager(Agent):
            'dataQueue': data_queue_name,
            'historyQueue': history_queue_name,
            'config': config,
-           'metrics': await self.fetch_metadata([metric['name'] for metric in metrics]),
         }
+        if metadata:
+            response['metrics'] = await self.fetch_metadata(metric_names)
         return response
 
 
