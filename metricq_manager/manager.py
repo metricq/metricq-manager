@@ -39,6 +39,8 @@ import cloudant
 from metricq import Agent, rpc_handler
 from metricq.logging import get_logger
 
+from .db import make_db
+
 logger = get_logger()
 
 click_log.basic_config(logger)
@@ -69,28 +71,14 @@ class Manager(Agent):
         self.history_exchange_name = 'metricq.history'
         self.history_exchange = None
 
-        self.config_path = config_path
         self.queue_ttl = queue_ttl
-
-        self.couchdb_client = cloudant.client.CouchDB(couchdb_user, couchdb_password, url=couchdb_url, connect=True)
-        self.couchdb_session = self.couchdb_client.session()
-        self.couchdb_db_config = self.couchdb_client.create_database("config")#, throw_on_exists=False)
-        self.couchdb_db_metadata = self.couchdb_client.create_database("metadata")
 
         # TODO if this proves to be reliable, remove the option
         self._subscription_autodelete = True
         # TODO Make some config stuff
         self._expires_seconds = 3600
 
-    async def fetch_metadata(self, metric_ids):
-        """ This is async in case we ever make asynchronous couchdb requests """
-        metadata = dict()
-        for metric in metric_ids:
-            try:
-                metadata[metric] = self.couchdb_db_metadata[metric]
-            except KeyError:
-                metadata[metric] = {'error': 'no metadata provided for {}'.format(metric)}
-        return metadata
+        self.db = make_db(config_path, couchdb_url, couchdb_user, couchdb_password)
 
     async def connect(self):
         await super().connect()
@@ -128,15 +116,6 @@ class Manager(Agent):
             await self.data_connection.close()
             self.data_connection = None
         await super().stop()
-
-    def read_config(self, token):
-        try:
-            config_document = self.couchdb_db_config[token]
-            config_document.fetch()
-            return dict(config_document)
-        except KeyError:
-            with open(os.path.join(self.config_path, token + ".json"), 'r') as f:
-                return json.load(f)
 
     async def rpc(self, function, to_token=None, **kwargs):
         if to_token:
@@ -184,7 +163,7 @@ class Manager(Agent):
 
         if metadata:
             metric_ids = metrics
-            metrics = await self.fetch_metadata(metric_ids)
+            metrics = await self.db.fetch_metadata(metric_ids)
 
         return {'dataServerAddress': self.data_url_credentialfree, 'dataQueue': queue.name, 'metrics': metrics}
 
@@ -211,7 +190,7 @@ class Manager(Agent):
                 pass
             raise Exception("queue already timed out")
 
-        metrics = await self.fetch_metadata(body['metrics'])
+        metrics = await self.db.fetch_metadata(body['metrics'])
 
         self.event_loop.call_soon(asyncio.ensure_future, channel.close())
         return {'dataServerAddress': self.data_url_credentialfree, 'dataQueue': queue_name, 'metrics': metrics}
@@ -230,7 +209,7 @@ class Manager(Agent):
         response = {
                    "dataServerAddress": self.data_url_credentialfree,
                    "dataExchange": self.data_exchange.name,
-                   "config": self.read_config(from_token),
+                   "config": await self.db.fetch_config(from_token),
         }
         return response
 
@@ -241,7 +220,7 @@ class Manager(Agent):
 
     @rpc_handler('transformer.subscribe')
     async def handle_transformer_subscribe(self, from_token, metrics, **body):
-        config = self.read_config(from_token)
+        config = await self.db.fetch_config(from_token)
         arguments = dict()
         try:
             arguments['x-message-ttl'] = int(1000 * config['messageTtl'])
@@ -263,7 +242,7 @@ class Manager(Agent):
         response = dict()
         response['dataServerAddress'] = self.data_url_credentialfree
         response['dataQueue'] = data_queue_name
-        response['metrics'] = await self.fetch_metadata(metrics)
+        response['metrics'] = await self.db.fetch_metadata(metrics)
         return response
 
     @rpc_handler('source.metrics_list', 'transformer.metrics_list')
@@ -281,51 +260,7 @@ class Manager(Agent):
         if isinstance(metrics, list):
             metrics = {metric: {} for metric in metrics}
 
-        metrics_new = 0
-        metrics_updated = 0
-
-        def update_doc(row):
-            nonlocal metrics_new, metrics_updated, metrics
-            metric = row['key']
-            document = metrics[metric]
-
-            for key in list(document.keys()):
-                if key.startswith('_'):
-                    del document[key]
-
-            document['_id'] = metric
-            if 'date' not in document:
-                document['date'] = datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc).isoformat()
-            if 'id' in row:
-                try:
-                    metrics_updated += 1
-                    if metric != row['id']:
-                        logger.error('inconsistent key/id while updating metadata {} != {}', metric, row['id'])
-                    if 'deleted' not in row['value']:
-                        document['_rev'] = row['value']['rev']
-                except KeyError:
-                    logger.error('something went wrong trying to update existing metadata document {}', metric)
-                    raise
-            else:
-                metrics_new += 1
-            return document
-
-        start = time.time()
-        docs = self.couchdb_db_metadata.all_docs(keys=list(metrics.keys()))
-        new_docs = [update_doc(row) for row in docs['rows']]
-        status = self.couchdb_db_metadata.bulk_docs(new_docs)
-        end = time.time()
-        if len(status) != len(metrics):
-            logger.error('metadata update mismatch in metrics count expected {}, actual {}', len(metrics), len(status))
-        error = False
-        for s in status:
-            if 'error' in s:
-                error = True
-                logger.error('error updating metadata {}', s)
-        logger.info('metadata update took {:.3f} s for {} new and {} existing metrics',
-                    end-start, metrics_new, metrics_updated)
-        if error:
-            raise RuntimeError('metadata update failed')
+        await self.db.update_metadata(metrics)
 
     @rpc_handler('history.register')
     async def handle_history_register(self, from_token, **body):
@@ -340,7 +275,7 @@ class Manager(Agent):
                    "dataServerAddress": self.data_url_credentialfree,
                    "historyExchange": self.history_exchange.name,
                    "historyQueue": history_queue_name,
-                   "config": self.read_config(from_token),
+                   "config": await self.db.fetch_config(from_token),
         }
         return response
 
@@ -393,7 +328,7 @@ class Manager(Agent):
         data_queue = await self.data_channel.declare_queue(data_queue_name, durable=True, robust=False)
         logger.debug('declared queue {} for {}', data_queue, from_token)
 
-        config = self.read_config(from_token)
+        config = await self.db.fetch_config(from_token)
         metric_configs = config['metrics']
 
         if isinstance(metric_configs, list):
@@ -423,7 +358,7 @@ class Manager(Agent):
            'config': config,
         }
         if metadata:
-            response['metrics'] = await self.fetch_metadata(metric_names)
+            response['metrics'] = await self.db.fetch_metadata(metric_names)
         return response
 
 
@@ -431,11 +366,12 @@ class Manager(Agent):
 @click.argument('rpc-url', default='amqp://localhost/')
 @click.argument('data-url', default='amqp://localhost:5672/')
 @click.option('--queue-ttl', default=30 * 60 * 1000)
-@click.option('--config-path', default='.', type=click.Path(exists=True, file_okay=False, dir_okay=True))
+@click.option('--config-path', default=None, type=click.Path(exists=True, file_okay=False, dir_okay=True))
 @click.option('--monitor/--no-monitor', default=True)
 @click.option('--couchdb-url', default='http://127.0.0.1:5984')
 @click.option('--couchdb-user', default='admin')
 @click.option('--couchdb-password', default='admin')
+@click.option('--config-path', default=None, type=click.Path())
 @click.option('--log-to-journal/--no-log-to-journal', default=False)
 @click_log.simple_verbosity_option(logger)
 def manager_cmd(rpc_url, data_url, config_path, queue_ttl, monitor, couchdb_url, couchdb_user, couchdb_password, log_to_journal):
