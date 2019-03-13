@@ -124,3 +124,5 @@ def make_db(config_path, couchdb_url, couchdb_user, couchdb_password):
         logger.warning('no couchdb url or user set, falling back to file-only interface from {}',
                        config_path)
         return Filedb(config_path)
+    else:
+        raise RuntimeError("must specify either --couchdb settings or --config-path")
