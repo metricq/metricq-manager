@@ -195,7 +195,9 @@ class Manager(Agent):
         logger.debug('unbinding queue {} for {}', queue_name, from_token)
 
         try:
-            queue = await channel.declare_queue(queue_name, passive=True, robust=False)
+            queue = await channel.declare_queue(queue_name,
+                                                auto_delete=self._subscription_autodelete,
+                                                passive=True, robust=False)
             assert body['metrics']
             await asyncio.wait([queue.unbind(exchange=self.data_exchange, routing_key=rk) for rk in body['metrics']],
                                loop=self.event_loop)
