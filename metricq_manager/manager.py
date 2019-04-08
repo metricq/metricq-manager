@@ -412,9 +412,13 @@ class Manager(Agent):
                     routing_keys.append(name)
                     metric_names.append(name)
 
+        binds = []
+
         for routing_key in routing_keys:
-            await history_queue.bind(exchange=self.history_exchange, routing_key=routing_key)
-            await data_queue.bind(exchange=self.data_exchange, routing_key=routing_key)
+            binds.append(history_queue.bind(exchange=self.history_exchange, routing_key=routing_key))
+            binds.append(data_queue.bind(exchange=self.data_exchange, routing_key=routing_key))
+
+        await asyncio.wait(binds)
 
         # TODO unbind other metrics that are no longer relevant
 
