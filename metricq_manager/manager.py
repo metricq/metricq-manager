@@ -74,7 +74,7 @@ class Manager(Agent):
 
         self.couchdb_client = cloudant.client.CouchDB(couchdb_user, couchdb_password, url=couchdb_url, connect=True)
         self.couchdb_session = self.couchdb_client.session()
-        self.couchdb_db_config = self.couchdb_client.create_database("config")#, throw_on_exists=False)
+        self.couchdb_db_config = self.couchdb_client.create_database("config")  # , throw_on_exists=False)
         self.couchdb_db_metadata = self.couchdb_client.create_database("metadata")
 
         # TODO if this proves to be reliable, remove the option
@@ -226,6 +226,14 @@ class Manager(Agent):
             logger.debug('releasing {} for {}', body['dataQueue'], from_token)
             queue = await self.data_channel.declare_queue(body['dataQueue'], robust=False)
             await queue.delete(if_unused=False, if_empty=False)
+
+    @rpc_handler('sink.register')
+    async def handle_sink_register(self, from_token, **body):
+        response = {
+                   "dataServerAddress": self.data_url_credentialfree,
+                   "config": self.read_config(from_token),
+        }
+        return response
 
     @rpc_handler('source.register')
     async def handle_source_register(self, from_token, **body):
