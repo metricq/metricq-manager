@@ -302,7 +302,10 @@ class Manager(Agent):
         # Does this even perform well?
         # ALSO: Async :-[
         if "selector" in body:
+            time_begin = time.time()
             result = self.couchdb_db_metadata.get_query_result({'_id': {'$regex': body['selector']}})
+            logger.info('metadata query from couchdb took {} s for {} entries',
+                        time.time() - time_begin, len(result))
             if fmt == 'array':
                 metrics = [doc['_id'] for doc in result]
             if fmt == 'object':
