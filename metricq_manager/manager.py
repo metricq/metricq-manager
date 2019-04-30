@@ -359,7 +359,7 @@ class Manager(Agent):
         return response
 
     @rpc_handler('history.get_metric_list')
-    async def handle_http_get_metric_list(self, from_token, **body):
+    async def handle_get_metric_list(self, from_token, **body):
         logger.warning('called deprecated history.get_metric_list by {}', from_token)
         metric_list = self.couchdb_db_metadata.keys(remote=True)
         response = {
@@ -368,31 +368,31 @@ class Manager(Agent):
         return response
 
     @rpc_handler('history.get_metrics')
-    async def handle_http_get_metrics(self, from_token, **body):
-        try:
-            fmt = body['format']
-        except KeyError:
-            # default
-            fmt = 'array'
-        if fmt not in ('array', 'object'):
-            raise AttributeError("unknown format requested: {}".format(body['format']))
+    async def handle_get_metrics(self, from_token,
+                                 format='array', historic=None, selector=None, **body):
+        if format not in ('array', 'object'):
+            raise AttributeError("unknown format requested: {}".format(format))
+
+        selector_dict = dict()
+        if selector is not None:
+            selector_dict = {'_id': {'$regex': selector}}
+        if historic is not None:
+            selector_dict = {'historic': {'$eq': historic}}
 
         # TODO can this be unified without compromising performance?
         # Does this even perform well?
         # ALSO: Async :-[
-        if "selector" in body:
+        if selector_dict:
             time_begin = time.time()
-            result = self.couchdb_db_metadata.get_query_result({'_id': {'$regex': body['selector']}})
-            logger.info('metadata query from couchdb took {} s',
-                        time.time() - time_begin)
-            if fmt == 'array':
+            result = self.couchdb_db_metadata.get_query_result(selector_dict)
+            if format == 'array':
                 metrics = [doc['_id'] for doc in result]
-            if fmt == 'object':
+            if format == 'object':
                 metrics = {doc['_id']: doc for doc in result}
         else:
-            if fmt == 'array':
+            if format == 'array':
                 metrics = self.couchdb_db_metadata.keys(remote=True)
-            if fmt == 'object':
+            if format == 'object':
                 metrics = {doc['_id']: doc for doc in self.couchdb_db_metadata}
 
         return {"metrics": metrics}
