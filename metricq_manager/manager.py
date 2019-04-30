@@ -314,7 +314,7 @@ class Manager(Agent):
                     if 'deleted' not in row['value']:
                         document['_rev'] = row['value']['rev']
                         try:
-                            document['historic'] = row['value']['historic']
+                            document['historic'] = row['doc']['historic']
                         except KeyError:
                             pass
                 except KeyError:
@@ -325,7 +325,7 @@ class Manager(Agent):
             return document
 
         start = time.time()
-        docs = self.couchdb_db_metadata.all_docs(keys=list(metrics.keys()))
+        docs = self.couchdb_db_metadata.all_docs(keys=list(metrics.keys()), include_docs=True)
         new_docs = [update_doc(row) for row in docs['rows']]
         status = self.couchdb_db_metadata.bulk_docs(new_docs)
         end = time.time()
