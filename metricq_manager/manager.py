@@ -399,7 +399,7 @@ class Manager(Agent):
 
     async def _mark_db_metrics(self, metric_names):
         def update_doc(row):
-            nonlocal metrics_names
+            nonlocal metric_names
             metric = row['key']
 
             document = dict()
