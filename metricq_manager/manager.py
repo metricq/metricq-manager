@@ -398,6 +398,10 @@ class Manager(Agent):
         return {"metrics": metrics}
 
     async def _mark_db_metrics(self, metric_names):
+        """
+        "UPDATE metadata SET historic=True WHERE _id in {metric_names}"
+        in 38 beautiful lines of python code
+        """
         def update_doc(row):
             nonlocal metric_names
             metric = row['key']
@@ -410,7 +414,7 @@ class Manager(Agent):
                         logger.error('inconsistent key/id while updating metadata {} != {}', metric, row['id'])
                     if 'deleted' not in row['value']:
                         document['_rev'] = row['value']['rev']
-                        document.update(row['value'])
+                        document.update(row['doc'])
                 except KeyError:
                     logger.error('something went wrong trying to update existing metadata document {}', metric)
                     raise
@@ -421,7 +425,7 @@ class Manager(Agent):
             return document
 
         start = time.time()
-        docs = self.couchdb_db_metadata.all_docs(keys=metric_names)
+        docs = self.couchdb_db_metadata.all_docs(keys=metric_names, include_docs=True)
         new_docs = [update_doc(row) for row in docs['rows']]
         status = self.couchdb_db_metadata.bulk_docs(new_docs)
         end = time.time()
