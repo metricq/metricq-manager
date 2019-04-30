@@ -313,6 +313,10 @@ class Manager(Agent):
                         logger.error('inconsistent key/id while updating metadata {} != {}', metric, row['id'])
                     if 'deleted' not in row['value']:
                         document['_rev'] = row['value']['rev']
+                        try:
+                            document['historic'] = row['value']['historic']
+                        except KeyError:
+                            pass
                 except KeyError:
                     logger.error('something went wrong trying to update existing metadata document {}', metric)
                     raise
@@ -393,6 +397,46 @@ class Manager(Agent):
 
         return {"metrics": metrics}
 
+    async def _mark_db_metrics(self, metric_names):
+        def update_doc(row):
+            nonlocal metrics_names
+            metric = row['key']
+
+            document = dict()
+            document['_id'] = metric
+            if 'id' in row:
+                try:
+                    if metric != row['id']:
+                        logger.error('inconsistent key/id while updating metadata {} != {}', metric, row['id'])
+                    if 'deleted' not in row['value']:
+                        document['_rev'] = row['value']['rev']
+                        document.update(row['value'])
+                except KeyError:
+                    logger.error('something went wrong trying to update existing metadata document {}', metric)
+                    raise
+            else:
+                document['date'] = datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc).isoformat()
+            # Do the one thing we actually want to do
+            document['historic'] = True
+            return document
+
+        start = time.time()
+        docs = self.couchdb_db_metadata.all_docs(keys=metric_names)
+        new_docs = [update_doc(row) for row in docs['rows']]
+        status = self.couchdb_db_metadata.bulk_docs(new_docs)
+        end = time.time()
+        if len(status) != len(metric_names):
+            logger.error('metadata update mismatch in metrics count expected {}, actual {}',
+                         len(metric_names), len(status))
+        error = False
+        for s in status:
+            if 'error' in s:
+                error = True
+                logger.error('error updating metadata {}', s)
+        logger.info('historic metadata update took {:.3f} s for {} metrics', end-start, len(metric_names))
+        if error:
+            raise RuntimeError('metadata update failed')
+
     @rpc_handler('db.register')
     async def handle_db_register(self, from_token, metadata=False, **body):
         db_uuid = from_token
@@ -419,6 +463,7 @@ class Manager(Agent):
                 if 'prefix' in metric_config and metric_config['prefix']:
                     routing_keys.append(name + ".#")
                     # TODO fetch pattern from DB
+                    # This won't work with the db metadata
                 else:
                     routing_keys.append(name)
                     metric_names.append(name)
@@ -430,6 +475,7 @@ class Manager(Agent):
             binds.append(data_queue.bind(exchange=self.data_exchange, routing_key=routing_key))
 
         await asyncio.wait(binds)
+        await self._mark_db_metrics(metric_names)
 
         # TODO unbind other metrics that are no longer relevant
 
