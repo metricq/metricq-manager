@@ -254,10 +254,14 @@ class Manager(Agent):
         config = self.read_config(from_token)
         arguments = dict()
         try:
-            arguments['x-message-ttl'] = int(1000 * config['messageTtl'])
+            arguments['x-message-ttl'] = int(1000 * config['message_ttl'])
         except KeyError:
-            # No TTL set
-            pass
+            try:
+                # TODO deprecate either :/
+                arguments['x-message-ttl'] = int(1000 * config['messageTtl'])
+            except KeyError:
+                # No TTL set
+                pass
 
         data_queue_name = 'data-' + from_token
         logger.debug('attempting to declare queue {} for {}', data_queue_name, from_token)
