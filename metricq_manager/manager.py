@@ -377,7 +377,7 @@ class Manager(Agent):
         if selector is not None:
             selector_dict['_id'] = {'$regex': selector}
         if historic is not None:
-            selector_dict['historic'] = {'$eq': historic}
+            selector_dict['historic'] = historic
 
         # TODO can this be unified without compromising performance?
         # Does this even perform well?
