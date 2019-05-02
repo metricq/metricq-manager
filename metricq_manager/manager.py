@@ -389,7 +389,7 @@ class Manager(Agent):
         # ALSO: Async :-[
         if selector_dict:
             time_begin = time.time()
-            result = self.couchdb_db_metadata.get_query_result(selector_dict)
+            result = self.couchdb_db_metadata.get_query_result(selector_dict, page_size=100000)
             if format == 'array':
                 metrics = [doc['_id'] for doc in result]
             if format == 'object':
