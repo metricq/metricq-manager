@@ -375,7 +375,12 @@ class Manager(Agent):
 
         selector_dict = dict()
         if selector is not None:
-            selector_dict['_id'] = {'$regex': selector}
+            if isinstance(selector, str):
+                selector_dict['_id'] = {'$regex': selector}
+            elif isinstance(selector, list):
+                selector_dict['_id'] = {'$in': selector}
+            else:
+                raise TypeError("Invalid selector type: {}, supported: str, list", type(selector))
         if historic is not None:
             selector_dict['historic'] = historic
 
