@@ -468,26 +468,31 @@ class Manager(Agent):
 
         if isinstance(metric_configs, list):
             # old legacy mode
-            metric_names = routing_keys = [metric['name'] for metric in metric_configs]
+            metric_names = history_routing_keys = data_routing_keys = [metric['name'] for metric in metric_configs]
         else:
-            routing_keys = []
+            history_routing_keys = []
+            data_routing_keys = []
             metric_names = []
             for name, metric_config in metric_configs.items():
                 if 'prefix' in metric_config and metric_config['prefix']:
-                    routing_keys.append(name + ".#")
+                    history_routing_keys.append(name + ".#")
+                    data_routing_keys.append(name + ".#")
                     # TODO fetch pattern from DB
                     # This won't work with the db metadata
                 elif 'source' in metric_config:
-                    routing_keys.append(metric_config['source'])
+                    history_routing_keys.append(name)
+                    data_routing_keys.append(metric_config['source'])
                     metric_names.append(name)
                 else:
-                    routing_keys.append(name)
+                    history_routing_keys.append(name)
+                    data_routing_keys.append(name)
                     metric_names.append(name)
 
         binds = []
 
-        for routing_key in routing_keys:
+        for routing_key in history_routing_keys:
             binds.append(history_queue.bind(exchange=self.history_exchange, routing_key=routing_key))
+        for routing_key in data_routing_keys:
             binds.append(data_queue.bind(exchange=self.data_exchange, routing_key=routing_key))
 
         await asyncio.wait(binds)
