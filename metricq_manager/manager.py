@@ -453,6 +453,12 @@ class Manager(Agent):
     @rpc_handler('db.register')
     async def handle_db_register(self, from_token, metadata=False, **body):
         db_uuid = from_token
+
+        config = self.read_config(from_token)
+        metric_configs = config['metrics']
+        if not metric_configs:
+            raise ValueError("db not properly configured, metrics empty")
+
         history_queue_name = 'history-' + db_uuid
         logger.debug('attempting to declare queue {} for {}', history_queue_name, from_token)
         history_queue = await self.data_channel.declare_queue(history_queue_name, durable=True, robust=False)
@@ -463,8 +469,6 @@ class Manager(Agent):
         data_queue = await self.data_channel.declare_queue(data_queue_name, durable=True, robust=False)
         logger.debug('declared queue {} for {}', data_queue, from_token)
 
-        config = self.read_config(from_token)
-        metric_configs = config['metrics']
 
         if isinstance(metric_configs, list):
             # old legacy mode
