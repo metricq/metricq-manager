@@ -202,8 +202,8 @@ class Manager(Agent):
                                                 auto_delete=self._subscription_autodelete,
                                                 passive=True, robust=False)
             assert body['metrics']
-            await asyncio.wait([queue.unbind(exchange=self.data_exchange, routing_key=rk) for rk in body['metrics']],
-                               loop=self.event_loop)
+            await asyncio.gather(*[queue.unbind(exchange=self.data_exchange, routing_key=rk) for rk in body['metrics']],
+                                 loop=self.event_loop)
             if body.get('end', True):
                 await self.data_channel.default_exchange.publish(aio_pika.Message(body=b'', type='end'),
                                                                  routing_key=queue_name)
@@ -272,9 +272,8 @@ class Manager(Agent):
                                                            arguments=arguments, robust=False)
         logger.debug('declared queue {} for {}', data_queue, from_token)
 
-        for metric in metrics:
-            # TODO bundle bind operations in asyncio.wait
-            await data_queue.bind(exchange=self.data_exchange, routing_key=metric)
+        bindings = [data_queue.bind(exchange=self.data_exchange, routing_key=metric) for metric in metrics]
+        await asyncio.gather(*bindings)
 
         # TODO unbind other metrics that are no longer relevant
         response = dict()
@@ -502,7 +501,7 @@ class Manager(Agent):
         for routing_key in data_routing_keys:
             binds.append(data_queue.bind(exchange=self.data_exchange, routing_key=routing_key))
 
-        await asyncio.wait(binds)
+        await asyncio.gather(*binds)
         await self._mark_db_metrics(metric_names)
 
         # TODO unbind other metrics that are no longer relevant
