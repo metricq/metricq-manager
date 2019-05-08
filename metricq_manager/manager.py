@@ -24,6 +24,7 @@ import json
 import os
 import uuid
 import logging
+from itertools import groupby
 
 import click
 import click_completion
@@ -172,12 +173,14 @@ class Manager(Agent):
         queue = await self.data_channel.declare_queue(queue_name,
                                                       auto_delete=self._subscription_autodelete,
                                                       arguments=arguments, robust=False)
-        logger.debug('declared queue {} for {}', queue, from_token)
+        logger.info('declared queue {} for {}', queue, from_token)
         try:
             metrics = body['metrics']
             if len(metrics) > 0:
-                await asyncio.wait([queue.bind(exchange=self.data_exchange, routing_key=rk) for rk in metrics],
-                                   loop=self.event_loop)
+                res = await asyncio.gather([queue.bind(exchange=self.data_exchange, routing_key=rk) for rk in metrics],
+                                           loop=self.event_loop)
+                logger.info('completed {} subscription bindings, result {}',
+                            len(metrics), [(len(g), t) for t, g in groupby([type(res)])])
         except KeyError:
             logger.warn('Got no metric list, assuming no metrics')
             metrics = []
