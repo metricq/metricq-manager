@@ -179,6 +179,7 @@ class Manager(Agent):
             if len(metrics) > 0:
                 res = await asyncio.gather(*[queue.bind(exchange=self.data_exchange, routing_key=rk) for rk in metrics],
                                            loop=self.event_loop)
+                # TODO remove that later if it works stable
                 logger.info('completed {} subscription bindings, result {}',
                             len(metrics), [(len(list(g)), t) for t, g in groupby([type(r) for r in res])])
         except KeyError:
