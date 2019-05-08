@@ -180,7 +180,7 @@ class Manager(Agent):
                 res = await asyncio.gather(*[queue.bind(exchange=self.data_exchange, routing_key=rk) for rk in metrics],
                                            loop=self.event_loop)
                 logger.info('completed {} subscription bindings, result {}',
-                            len(metrics), [(len(g), t) for t, g in groupby([type(res)])])
+                            len(metrics), [(len(list(g)), t) for t, g in groupby([type(res)])])
         except KeyError:
             logger.warn('Got no metric list, assuming no metrics')
             metrics = []
