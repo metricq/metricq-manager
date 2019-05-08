@@ -177,7 +177,7 @@ class Manager(Agent):
         try:
             metrics = body['metrics']
             if len(metrics) > 0:
-                res = await asyncio.gather([queue.bind(exchange=self.data_exchange, routing_key=rk) for rk in metrics],
+                res = await asyncio.gather(*[queue.bind(exchange=self.data_exchange, routing_key=rk) for rk in metrics],
                                            loop=self.event_loop)
                 logger.info('completed {} subscription bindings, result {}',
                             len(metrics), [(len(g), t) for t, g in groupby([type(res)])])
