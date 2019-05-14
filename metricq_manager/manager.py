@@ -487,9 +487,9 @@ class Manager(Agent):
                     data_routing_keys.append(name + ".#")
                     # TODO fetch pattern from DB
                     # This won't work with the db metadata
-                elif 'source' in metric_config:
+                elif 'input' in metric_config:
                     history_routing_keys.append(name)
-                    data_routing_keys.append(metric_config['source'])
+                    data_routing_keys.append(metric_config['input'])
                     metric_names.append(name)
                 else:
                     history_routing_keys.append(name)
