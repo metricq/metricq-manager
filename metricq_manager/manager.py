@@ -302,7 +302,7 @@ class Manager(Agent):
         metrics_updated = 0
 
         def update_doc(row):
-            nonlocal metrics_new, metrics_updated, metrics
+            nonlocal metrics_new, metrics_updated, metrics, from_token
             metric = row['key']
             document = metrics[metric]
 
@@ -311,6 +311,9 @@ class Manager(Agent):
                     del document[key]
 
             document['_id'] = metric
+            if 'source' in document:
+                logger.warn(f'The field \'source\' was already set in declare_metrics from \'{from_token}\' for metric \'{metric}\'. Overwritting.')
+            document['source'] = from_token
             if 'date' not in document:
                 document['date'] = datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc).isoformat()
             if 'id' in row:
@@ -395,7 +398,6 @@ class Manager(Agent):
         # Does this even perform well?
         # ALSO: Async :-[
         if selector_dict:
-            time_begin = time.time()
             result = self.couchdb_db_metadata.get_query_result(selector_dict, page_size=100000)
             if format == 'array':
                 metrics = [doc['_id'] for doc in result]
@@ -471,7 +473,6 @@ class Manager(Agent):
         logger.debug('attempting to declare queue {} for {}', data_queue_name, from_token)
         data_queue = await self.data_channel.declare_queue(data_queue_name, durable=True, robust=False)
         logger.debug('declared queue {} for {}', data_queue, from_token)
-
 
         if isinstance(metric_configs, list):
             # old legacy mode
