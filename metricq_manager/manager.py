@@ -377,7 +377,7 @@ class Manager(Agent):
         }
         return response
 
-    @rpc_handler('history.get_metrics')
+    @rpc_handler('get_metrics', 'history.get_metrics')
     async def handle_get_metrics(self, from_token,
                                  format='array', historic=None, selector=None, **body):
         if format not in ('array', 'object'):
@@ -392,6 +392,9 @@ class Manager(Agent):
             else:
                 raise TypeError("Invalid selector type: {}, supported: str, list", type(selector))
         if historic is not None:
+            if not isinstance(historic, bool):
+                raise AttributeError(
+                    'invalid type for "historic" argument: should be bool, is {}'.format(type(historic)))
             selector_dict['historic'] = historic
 
         # TODO can this be unified without compromising performance?
