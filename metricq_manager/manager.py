@@ -18,27 +18,25 @@
 # You should have received a copy of the GNU General Public License
 # along with metricq.  If not, see <http://www.gnu.org/licenses/>.
 
+import asyncio
 import datetime
-import time
 import json
-import os
-import uuid
 import logging
+import os
+import time
+import uuid
 from itertools import groupby
 
 import click
-import click_completion
-import click_log
 
-import asyncio
 import aio_pika
 import aiomonitor
-from yarl import URL
-
+import click_completion
+import click_log
 import cloudant
-
 from metricq import Agent, rpc_handler
 from metricq.logging import get_logger
+from yarl import URL
 
 logger = get_logger()
 
