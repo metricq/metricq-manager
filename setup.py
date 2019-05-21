@@ -19,17 +19,27 @@
 # along with metricq.  If not, see <http://www.gnu.org/licenses/>.
 from setuptools import setup
 
-setup(name='metricq_manager',
-      version='0.1',
-      author='TU Dresden',
-      python_requires=">=3.5",
-      packages=['metricq_manager'],
-      scripts=[],
-      entry_points='''
+setup(
+    name="metricq_manager",
+    version="0.1",
+    author="TU Dresden",
+    python_requires=">=3.5",
+    packages=["metricq_manager"],
+    scripts=[],
+    entry_points="""
       [console_scripts]
       metricq-manager=metricq_manager:manager_cmd
-      ''',
-      install_requires=['aio-pika', 'aiomonitor', 'click', 'click-completion', 'click-log', 'colorama', 'metricq', 'cloudant', 'yarl'],
-      extras_require = {
-          'journallogger':  ["systemd"]
-      })
+      """,
+    install_requires=[
+        "aio-pika",
+        "aiomonitor",
+        "click",
+        "click-completion",
+        "click-log",
+        "colorama",
+        "metricq",
+        "cloudant",
+        "yarl",
+    ],
+    extras_require={"journallogger": ["systemd"]},
+)

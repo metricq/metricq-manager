@@ -22,10 +22,12 @@ def _get_message(record):
 def _handle_wrap(fcn):
     """Wrap the handle function to replace the passed in
     record's getMessage function before calling handle"""
+
     @functools.wraps(fcn)
     def handle(record):
         record.getMessage = types.MethodType(_get_message, record)
         return fcn(record)
+
     return handle
 
 
@@ -40,4 +42,4 @@ def get_logger(name=None):
 
 logger = get_logger(__name__)
 click_log.basic_config(logger)
-logger.setLevel('INFO')
+logger.setLevel("INFO")
