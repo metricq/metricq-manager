@@ -99,9 +99,15 @@ class Manager(Agent):
     async def fetch_metadata(self, metric_ids):
         """ This is async in case we ever make asynchronous couchdb requests """
         metadata = dict()
+        # TODO use $in queries for very large requests
         for metric in metric_ids:
             try:
                 metadata[metric] = self.couchdb_db_metadata[metric]
+                # TODO avoid redundant fetches.. but how can we know?
+                # We could check metric in self.couchdb_db_metadata.keys(remote=False)
+                # But that function returns a list(!) not a set-like object like the
+                # underlying dict or any sane object would
+                metadata[metric].fetch()
             except KeyError:
                 metadata[metric] = None
         return metadata
