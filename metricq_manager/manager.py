@@ -90,7 +90,7 @@ class Manager(Agent):
             try:
                 metadata[metric] = self.couchdb_db_metadata[metric]
             except KeyError:
-                metadata[metric] = {'error': 'no metadata provided for {}'.format(metric)}
+                metadata[metric] = None
         return metadata
 
     async def connect(self):
