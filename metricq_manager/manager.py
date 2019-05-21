@@ -478,7 +478,13 @@ class Manager(Agent):
             if isinstance(selector, str):
                 selector_dict["_id"] = {"$regex": selector}
             elif isinstance(selector, list):
-                selector_dict["_id"] = {"$in": selector}
+                if len(selector) < 1:
+                    raise ValueError("Empty selector list")
+                if len(selector) == 1:
+                    # That's *much* faster... really :(
+                    selector_dict["_id"] = selector
+                else:
+                    selector_dict["_id"] = {"$in": selector}
             else:
                 raise TypeError(
                     "Invalid selector type: {}, supported: str, list", type(selector)
