@@ -381,17 +381,26 @@ class Manager(Agent):
                     del document[key]
 
             document["_id"] = metric
+
             if "source" in document:
                 logger.warn(
-                    f"The field 'source' was already set in declare_metrics from '{from_token}' for metric '{metric}'. Overwritting."
+                    f"ignoring reserved field 'source' for metadata for '{metric}' from '{from_token}'"
                 )
             document["source"] = from_token
+
             if "date" not in document:
                 document["date"] = (
                     datetime.datetime.utcnow()
                     .replace(tzinfo=datetime.timezone.utc)
                     .isoformat()
                 )
+
+            if "historic" in document:
+                logger.warn(
+                    f"ignoring reserved metadata field 'historic' for '{metric}' from {from_token}"
+                )
+                del document["historic"]
+
             if "id" in row:
                 try:
                     metrics_updated += 1
