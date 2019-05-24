@@ -266,11 +266,6 @@ class Manager(Agent):
                 )
         except aio_pika.exceptions.ChannelClosed as e:
             logger.error("unsubscribe failed, queue timed out: {}", e)
-            # Trying to avoid leaking closing futures. Super annoying
-            try:
-                await channel.closing
-            except aio_pika.exceptions.ChannelClosed:
-                pass
             raise Exception("queue already timed out")
 
         metrics = await self.fetch_metadata(body["metrics"])

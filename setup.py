@@ -31,7 +31,7 @@ setup(
       metricq-manager=metricq_manager:manager_cmd
       """,
     install_requires=[
-        "aio-pika",
+        "aio-pika>=4.8.0",
         "aiomonitor",
         "click",
         "click-completion",
