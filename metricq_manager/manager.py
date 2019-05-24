@@ -491,8 +491,8 @@ class Manager(Agent):
                 if len(selector) < 1:
                     raise ValueError("Empty selector list")
                 if len(selector) == 1:
-                    # That's *much* faster... really :(
-                    selector_dict["_id"] = selector
+                    # That may possibly be faster.
+                    selector_dict["_id"] = selector[0]
                 else:
                     selector_dict["_id"] = {"$in": selector}
             else:
@@ -517,12 +517,12 @@ class Manager(Agent):
             )
             if format == "array":
                 metrics = [doc["_id"] for doc in result]
-            if format == "object":
+            elif format == "object":
                 metrics = {doc["_id"]: doc for doc in result}
         else:
             if format == "array":
                 metrics = self.couchdb_db_metadata.keys(remote=True)
-            if format == "object":
+            elif format == "object":
                 metrics = {doc["_id"]: doc for doc in self.couchdb_db_metadata}
 
         return {"metrics": metrics}
