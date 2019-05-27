@@ -366,8 +366,12 @@ class Manager(Agent):
         metrics_new = 0
         metrics_updated = 0
 
+        update_date = (
+            datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc).isoformat()
+        )
+
         def update_doc(row):
-            nonlocal metrics_new, metrics_updated, metrics, from_token
+            nonlocal metrics_new, metrics_updated, metrics, from_token, update_date
             metric = row["key"]
             document = metrics[metric]
 
@@ -384,11 +388,7 @@ class Manager(Agent):
             document["source"] = from_token
 
             if "date" not in document:
-                document["date"] = (
-                    datetime.datetime.utcnow()
-                    .replace(tzinfo=datetime.timezone.utc)
-                    .isoformat()
-                )
+                document["date"] = update_date
 
             if "historic" in document:
                 logger.warn(
