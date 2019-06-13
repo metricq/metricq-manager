@@ -33,7 +33,7 @@ import aio_pika
 import aiomonitor
 import click_completion
 import click_log
-import cloudant
+from aiocouch import CouchDB
 from metricq import Agent, rpc_handler
 from metricq.logging import get_logger
 from yarl import URL
@@ -82,14 +82,14 @@ class Manager(Agent):
         self.config_path = config_path
         self.queue_ttl = queue_ttl
 
-        self.couchdb_client = cloudant.client.CouchDB(
-            couchdb_user, couchdb_password, url=couchdb_url, connect=True
+        self.couchdb_client = CouchDB(
+            couchdb_url,
+            user=couchdb_user,
+            password=couchdb_password,
+            loop=self.event_loop,
         )
-        self.couchdb_session = self.couchdb_client.session()
-        self.couchdb_db_config = self.couchdb_client.create_database(
-            "config"
-        )  # , throw_on_exists=False)
-        self.couchdb_db_metadata = self.couchdb_client.create_database("metadata")
+        self.couchdb_db_config = None
+        self.couchdb_db_metadata = None
 
         # TODO if this proves to be reliable, remove the option
         self._subscription_autodelete = True
@@ -97,22 +97,21 @@ class Manager(Agent):
         self._expires_seconds = 3600
 
     async def fetch_metadata(self, metric_ids):
-        """ This is async in case we ever make asynchronous couchdb requests """
-        metadata = dict()
-        # TODO use $in queries for very large requests
-        for metric in metric_ids:
-            try:
-                metadata[metric] = self.couchdb_db_metadata[metric]
-                # TODO avoid redundant fetches.. but how can we know?
-                # We could check metric in self.couchdb_db_metadata.keys(remote=False)
-                # But that function returns a list(!) not a set-like object like the
-                # underlying dict or any sane object would
-                metadata[metric].fetch()
-            except KeyError:
-                metadata[metric] = None
-        return metadata
+        return {
+            doc.id: doc.data
+            async for doc in self.couchdb_db_metadata.docs(metric_ids, create=True)
+        }
 
     async def connect(self):
+        # First, connect to couchdb
+        self.couchdb_db_config = await self.couchdb_client.create(
+            "config", exists_ok=True
+        )
+        self.couchdb_db_metadata = await self.couchdb_client.create(
+            "metadata", exists_ok=True
+        )
+
+        # After that, we do the MetricQ connection stuff
         await super().connect()
 
         # TODO persistent?
@@ -162,12 +161,11 @@ class Manager(Agent):
             self.data_connection = None
         await super().stop()
 
-    def read_config(self, token):
+    async def read_config(self, token):
         try:
-            config_document = self.couchdb_db_config[token]
-            config_document.fetch()
-            return dict(config_document)
+            return (await self.couchdb_db_config[token]).data
         except KeyError:
+            # TODO use aiofile
             with open(os.path.join(self.config_path, token + ".json"), "r") as f:
                 return json.load(f)
 
@@ -294,7 +292,7 @@ class Manager(Agent):
     async def handle_sink_register(self, from_token, **body):
         response = {
             "dataServerAddress": self.data_url_credentialfree,
-            "config": self.read_config(from_token),
+            "config": await self.read_config(from_token),
         }
         return response
 
@@ -303,7 +301,7 @@ class Manager(Agent):
         response = {
             "dataServerAddress": self.data_url_credentialfree,
             "dataExchange": self.data_exchange.name,
-            "config": self.read_config(from_token),
+            "config": await self.read_config(from_token),
         }
         return response
 
@@ -314,7 +312,7 @@ class Manager(Agent):
 
     @rpc_handler("transformer.subscribe")
     async def handle_transformer_subscribe(self, from_token, metrics, **body):
-        config = self.read_config(from_token)
+        config = await self.read_config(from_token)
         arguments = dict()
         try:
             arguments["x-message-ttl"] = int(1000 * config["message_ttl"])
@@ -370,72 +368,48 @@ class Manager(Agent):
             datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc).isoformat()
         )
 
-        def update_doc(row):
-            nonlocal metrics_new, metrics_updated, metrics, from_token, update_date
-            metric = row["key"]
-            document = metrics[metric]
-
-            for key in list(document.keys()):
-                if key.startswith("_"):
-                    del document[key]
-
-            document["_id"] = metric
-
-            if "source" in document:
+        def update_doc(doc, metadata, update_date):
+            if "source" in metadata:
                 logger.warn(
-                    f"ignoring reserved field 'source' for metadata for '{metric}' from '{from_token}'"
+                    f"ignoring reserved field 'source' for metadata for '{doc.id}' from '{from_token}'"
                 )
-            document["source"] = from_token
+                del metadata["source"]
 
-            if "date" not in document:
-                document["date"] = update_date
+            if "date" not in metadata:
+                doc["date"] = update_date
 
-            if "historic" in document:
+            if "historic" in metadata:
                 logger.warn(
-                    f"ignoring reserved metadata field 'historic' for '{metric}' from {from_token}"
+                    f"ignoring reserved metadata field 'historic' for '{doc.id}' from {from_token}"
                 )
-                del document["historic"]
+                del metadata["historic"]
 
-            if "id" in row:
-                try:
-                    metrics_updated += 1
-                    if metric != row["id"]:
-                        logger.error(
-                            "inconsistent key/id while updating metadata {} != {}",
-                            metric,
-                            row["id"],
-                        )
-                    if "deleted" not in row["value"]:
-                        document["_rev"] = row["value"]["rev"]
-                        try:
-                            document["historic"] = row["doc"]["historic"]
-                        except KeyError:
-                            pass
-                except KeyError:
-                    logger.error(
-                        "something went wrong trying to update existing metadata document {}",
-                        metric,
-                    )
-                    raise
-            else:
-                metrics_new += 1
-            return document
+            for key, value in metadata.items():
+                if not key.startswith("_"):
+                    doc[key] = value
 
         start = time.time()
-        docs = self.couchdb_db_metadata.all_docs(
-            keys=list(metrics.keys()), include_docs=True
-        )
-        new_docs = [update_doc(row) for row in docs["rows"]]
-        status = self.couchdb_db_metadata.bulk_docs(new_docs)
+        async with self.couchdb_db_metadata.update_docs(
+            list(metrics.keys()), create=True
+        ) as docs:
+            async for doc in docs:
+                if not doc.exists:
+                    metrics_new += 1
+                else:
+                    metrics_updated += 1
+
+                update_doc(doc, metrics[doc.id], update_date)
+                doc["source"] = from_token
         end = time.time()
-        if len(status) != len(metrics):
+
+        if len(docs.status) != len(metrics):
             logger.error(
                 "metadata update mismatch in metrics count expected {}, actual {}",
                 len(metrics),
-                len(status),
+                len(docs.status),
             )
         error = False
-        for s in status:
+        for s in docs.status:
             if "error" in s:
                 error = True
                 logger.error("error updating metadata {}", s)
@@ -465,14 +439,14 @@ class Manager(Agent):
             "dataServerAddress": self.data_url_credentialfree,
             "historyExchange": self.history_exchange.name,
             "historyQueue": history_queue_name,
-            "config": self.read_config(from_token),
+            "config": await self.read_config(from_token),
         }
         return response
 
     @rpc_handler("history.get_metric_list")
     async def handle_get_metric_list(self, from_token, **body):
         logger.warning("called deprecated history.get_metric_list by {}", from_token)
-        metric_list = self.couchdb_db_metadata.keys(remote=True)
+        metric_list = [key async for key in self.couchdb_db_metadata.akeys()]
         response = {"metric_list": metric_list}
         return response
 
@@ -512,73 +486,44 @@ class Manager(Agent):
         # Does this even perform well?
         # ALSO: Async :-[
         if selector_dict:
-            result = self.couchdb_db_metadata.get_query_result(
-                selector_dict, page_size=100_000
-            )
+            aiter = self.couchdb_db_metadata.find(selector_dict)
             if format == "array":
-                metrics = [doc["_id"] for doc in result]
+                metrics = [doc["_id"] async for doc in aiter]
             elif format == "object":
-                metrics = {doc["_id"]: doc for doc in result}
+                metrics = {doc["_id"]: doc.data async for doc in aiter}
+
         else:
             if format == "array":
-                metrics = self.couchdb_db_metadata.keys(remote=True)
+                metrics = [key async for key in self.couchdb_db_metadata.akeys()]
             elif format == "object":
-                metrics = {doc["_id"]: doc for doc in self.couchdb_db_metadata}
+                metrics = {
+                    doc["_id"]: doc.data
+                    async for doc in self.couchdb_db_metadata.docs()
+                }
 
         return {"metrics": metrics}
 
     async def _mark_db_metrics(self, metric_names):
         """
         "UPDATE metadata SET historic=True WHERE _id in {metric_names}"
-        in 38 beautiful lines of python code
+        in 38-33 beautiful lines of python code
         """
-
-        def update_doc(row):
-            nonlocal metric_names
-            metric = row["key"]
-
-            document = dict()
-            document["_id"] = metric
-            if "id" in row:
-                try:
-                    if metric != row["id"]:
-                        logger.error(
-                            "inconsistent key/id while updating metadata {} != {}",
-                            metric,
-                            row["id"],
-                        )
-                    if "deleted" not in row["value"]:
-                        document["_rev"] = row["value"]["rev"]
-                        document.update(row["doc"])
-                except KeyError:
-                    logger.error(
-                        "something went wrong trying to update existing metadata document {}",
-                        metric,
-                    )
-                    raise
-            else:
-                document["date"] = (
-                    datetime.datetime.utcnow()
-                    .replace(tzinfo=datetime.timezone.utc)
-                    .isoformat()
-                )
-            # Do the one thing we actually want to do
-            document["historic"] = True
-            return document
-
         start = time.time()
-        docs = self.couchdb_db_metadata.all_docs(keys=metric_names, include_docs=True)
-        new_docs = [update_doc(row) for row in docs["rows"]]
-        status = self.couchdb_db_metadata.bulk_docs(new_docs)
+        async with self.couchdb_db_metadata.update_docs(
+            metric_names, create=True
+        ) as docs:
+            async for doc in docs:
+                doc["historic"] = True
         end = time.time()
-        if len(status) != len(metric_names):
+
+        if len(docs.status) != len(metric_names):
             logger.error(
                 "metadata update mismatch in metrics count expected {}, actual {}",
                 len(metric_names),
-                len(status),
+                len(docs.status),
             )
         error = False
-        for s in status:
+        for s in docs.status:
             if "error" in s:
                 error = True
                 logger.error("error updating metadata {}", s)
@@ -594,7 +539,7 @@ class Manager(Agent):
     async def handle_db_register(self, from_token, metadata=False, **body):
         db_uuid = from_token
 
-        config = self.read_config(from_token)
+        config = await self.read_config(from_token)
         metric_configs = config["metrics"]
         if not metric_configs:
             raise ValueError("db not properly configured, metrics empty")
