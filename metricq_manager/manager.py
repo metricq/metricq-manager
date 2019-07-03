@@ -181,7 +181,7 @@ class Manager(Agent):
             kwargs["routing_key"] = function
             kwargs["cleanup_on_response"] = False
 
-        await self.rpc(function=function, **kwargs)
+        await super().rpc(function=function, **kwargs)
 
     @rpc_handler("subscribe", "sink.subscribe")
     async def handle_subscribe(self, from_token, metadata=True, **body):
