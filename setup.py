@@ -38,7 +38,7 @@ setup(
         "click-log",
         "colorama",
         "metricq",
-        "cloudant",
+        "aiocouch",
         "yarl",
     ],
     extras_require={"journallogger": ["systemd"]},
