@@ -23,6 +23,7 @@ import datetime
 import json
 import logging
 import os
+import sys
 import time
 import uuid
 from itertools import groupby
@@ -452,7 +453,14 @@ class Manager(Agent):
 
     @rpc_handler("get_metrics", "history.get_metrics")
     async def handle_get_metrics(
-        self, from_token, format="array", historic=None, selector=None, **body
+        self,
+        from_token,
+        format="array",
+        historic=None,
+        selector=None,
+        prefix=None,
+        limit=None,
+        **body,
     ):
         if format not in ("array", "object"):
             raise AttributeError("unknown format requested: {}".format(format))
@@ -486,7 +494,11 @@ class Manager(Agent):
         # Does this even perform well?
         # ALSO: Async :-[
         if selector_dict:
-            aiter = self.couchdb_db_metadata.find(selector_dict)
+            if prefix is not None:
+                raise AttributeError(
+                    'cannot get_metrics with both "selector" and "prefix".'
+                )
+            aiter = self.couchdb_db_metadata.find(selector_dict, limit=limit)
             if format == "array":
                 metrics = [doc["_id"] async for doc in aiter]
             elif format == "object":
@@ -494,11 +506,18 @@ class Manager(Agent):
 
         else:
             if format == "array":
-                metrics = [key async for key in self.couchdb_db_metadata.akeys()]
+                metrics = [
+                    key
+                    async for key in self.couchdb_db_metadata.akeys(
+                        prefix=prefix, limit=limit
+                    )
+                ]
             elif format == "object":
                 metrics = {
                     doc["_id"]: doc.data
-                    async for doc in self.couchdb_db_metadata.docs()
+                    async for doc in self.couchdb_db_metadata.docs(
+                        prefix=prefix, limit=limit
+                    )
                 }
 
         return {"metrics": metrics}
