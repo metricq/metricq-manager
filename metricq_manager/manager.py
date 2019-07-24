@@ -488,12 +488,13 @@ class Manager(Agent):
                         type(historic)
                     )
                 )
-            selector_dict["historic"] = historic
 
         # TODO can this be unified without compromising performance?
         # Does this even perform well?
         # ALSO: Async :-[
         if selector_dict:
+            if historic is not None:
+                selector_dict["historic"] = historic
             if prefix is not None:
                 raise AttributeError(
                     'cannot get_metrics with both "selector" and "prefix".'
@@ -505,19 +506,18 @@ class Manager(Agent):
                 metrics = {doc["_id"]: doc.data async for doc in aiter}
 
         else:
+            if historic is not None:
+                endpoint = self.couchdb_db_metadata.view("index", "historic")
+            else:
+                endpoint = self.couchdb_db_metadata.all_docs()
             if format == "array":
                 metrics = [
-                    key
-                    async for key in self.couchdb_db_metadata.akeys(
-                        prefix=prefix, limit=limit
-                    )
+                    key async for key in endpoint.akeys(prefix=prefix, limit=limit)
                 ]
             elif format == "object":
                 metrics = {
                     doc["_id"]: doc.data
-                    async for doc in self.couchdb_db_metadata.docs(
-                        prefix=prefix, limit=limit
-                    )
+                    async for doc in endpoint.docs(prefix=prefix, limit=limit)
                 }
 
         return {"metrics": metrics}
