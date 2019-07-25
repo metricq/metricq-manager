@@ -26,7 +26,7 @@ import os
 import sys
 import time
 import uuid
-from itertools import groupby
+from itertools import groupby, islice
 
 import click
 
@@ -459,11 +459,15 @@ class Manager(Agent):
         historic=None,
         selector=None,
         prefix=None,
+        infix=None,
         limit=None,
         **body,
     ):
         if format not in ("array", "object"):
             raise AttributeError("unknown format requested: {}".format(format))
+
+        if infix is not None and prefix is not None:
+            raise AttributeError('cannot get_metrics with both "prefix" and "infix"')
 
         selector_dict = dict()
         if selector is not None:
@@ -495,9 +499,9 @@ class Manager(Agent):
         if selector_dict:
             if historic is not None:
                 selector_dict["historic"] = historic
-            if prefix is not None:
+            if prefix is not None or infix is not None:
                 raise AttributeError(
-                    'cannot get_metrics with both "selector" and "prefix".'
+                    'cannot get_metrics with both "selector" and "prefix" or "infix".'
                 )
             aiter = self.couchdb_db_metadata.find(selector_dict, limit=limit)
             if format == "array":
@@ -505,20 +509,38 @@ class Manager(Agent):
             elif format == "object":
                 metrics = {doc["_id"]: doc.data async for doc in aiter}
 
-        else:
-            if historic is not None:
-                endpoint = self.couchdb_db_metadata.view("index", "historic")
+        else:  # No selector dict, all *fix / historic filtering
+            request_limit = limit
+            if infix is None:
+                if historic is not None:
+                    endpoint = self.couchdb_db_metadata.view("index", "historic")
+                else:
+                    endpoint = self.couchdb_db_metadata.all_docs()
             else:
-                endpoint = self.couchdb_db_metadata.all_docs()
+                # These views produce stupid duplicates thus we must filter ourselves and request more
+                # to get enough results. We assume for no more than 6 infix segments on average
+                if limit is not None:
+                    request_limit = 6 * limit
+                if historic is not None:
+                    raise NotImplementedError(
+                        "non-historic infix lookup not yet supported"
+                    )
+                else:
+                    endpoint = self.couchdb_db_metadata.view("components", "historic")
             if format == "array":
                 metrics = [
-                    key async for key in endpoint.akeys(prefix=prefix, limit=limit)
+                    key
+                    async for key in endpoint.akeys(prefix=prefix, limit=request_limit)
                 ]
+                if request_limit != limit:
+                    metrics = islice(sorted(set(metrics)), limit)
             elif format == "object":
                 metrics = {
                     doc["_id"]: doc.data
-                    async for doc in endpoint.docs(prefix=prefix, limit=limit)
+                    async for doc in endpoint.docs(prefix=prefix, limit=request_limit)
                 }
+                if request_limit != limit:
+                    metrics = dict(islice(sorted(metrics.items()), limit))
 
         return {"metrics": metrics}
 
