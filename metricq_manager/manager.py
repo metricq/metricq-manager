@@ -512,11 +512,13 @@ class Manager(Agent):
         else:  # No selector dict, all *fix / historic filtering
             request_limit = limit
             if infix is None:
+                request_prefix = prefix
                 if historic is not None:
                     endpoint = self.couchdb_db_metadata.view("index", "historic")
                 else:
                     endpoint = self.couchdb_db_metadata.all_docs()
             else:
+                request_prefix = infix
                 # These views produce stupid duplicates thus we must filter ourselves and request more
                 # to get enough results. We assume for no more than 6 infix segments on average
                 if limit is not None:
@@ -530,7 +532,9 @@ class Manager(Agent):
             if format == "array":
                 metrics = [
                     key
-                    async for key in endpoint.akeys(prefix=prefix, limit=request_limit)
+                    async for key in endpoint.akeys(
+                        prefix=request_prefix, limit=request_limit
+                    )
                 ]
                 if request_limit != limit:
                     # Object of type islice is not JSON serializable m(
@@ -538,7 +542,9 @@ class Manager(Agent):
             elif format == "object":
                 metrics = {
                     doc["_id"]: doc.data
-                    async for doc in endpoint.docs(prefix=prefix, limit=request_limit)
+                    async for doc in endpoint.docs(
+                        prefix=request_prefix, limit=request_limit
+                    )
                 }
                 if request_limit != limit:
                     metrics = dict(islice(sorted(metrics.items()), limit))
