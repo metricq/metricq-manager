@@ -522,11 +522,11 @@ class Manager(Agent):
                 if limit is not None:
                     request_limit = 6 * limit
                 if historic is not None:
+                    endpoint = self.couchdb_db_metadata.view("components", "historic")
+                else:
                     raise NotImplementedError(
                         "non-historic infix lookup not yet supported"
                     )
-                else:
-                    endpoint = self.couchdb_db_metadata.view("components", "historic")
             if format == "array":
                 metrics = [
                     key
