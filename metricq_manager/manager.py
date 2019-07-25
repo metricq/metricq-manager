@@ -564,12 +564,6 @@ class Manager(Agent):
                 doc["historic"] = True
         end = time.time()
 
-        if len(docs.status) != len(metric_names):
-            logger.error(
-                "metadata update mismatch in metrics count expected {}, actual {}",
-                len(metric_names),
-                len(docs.status),
-            )
         error = False
         for s in docs.status:
             if "error" in s:
