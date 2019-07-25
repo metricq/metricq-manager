@@ -533,7 +533,8 @@ class Manager(Agent):
                     async for key in endpoint.akeys(prefix=prefix, limit=request_limit)
                 ]
                 if request_limit != limit:
-                    metrics = islice(sorted(set(metrics)), limit)
+                    # Object of type islice is not JSON serializable m(
+                    metrics = list(islice(sorted(set(metrics)), limit))
             elif format == "object":
                 metrics = {
                     doc["_id"]: doc.data
