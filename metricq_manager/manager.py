@@ -516,7 +516,7 @@ class Manager(Agent):
                 if historic is not None:
                     endpoint = self.couchdb_db_metadata.view("index", "historic")
                 else:
-                    endpoint = self.couchdb_db_metadata.all_docs()
+                    endpoint = self.couchdb_db_metadata.all_docs
             else:
                 request_prefix = infix
                 # These views produce stupid duplicates thus we must filter ourselves and request more
@@ -532,7 +532,7 @@ class Manager(Agent):
             if format == "array":
                 metrics = [
                     key
-                    async for key in endpoint.akeys(
+                    async for key in endpoint.ids(
                         prefix=request_prefix, limit=request_limit
                     )
                 ]
