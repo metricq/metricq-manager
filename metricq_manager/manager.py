@@ -186,9 +186,15 @@ class Manager(Agent):
     async def handle_subscribe(self, from_token, metadata=True, **body):
         # TODO figure out why auto-assigned queues cannot be used by the client
         try:
+            # TODO check if naming is allowed...
             queue_name = body["dataQueue"]
+            if not (
+                queue_name.starts_with(from_token) and queue_name.ends_with("-data")
+            ):
+                raise ValueError("Invalid subscription queue name")
         except KeyError:
-            queue_name = "subscription-" + uuid.uuid4().hex
+            uid = uuid.uuid4().hex
+            queue_name = f"{from_token}-{uid}-data"
         logger.debug("attempting to declare queue {} for {}", queue_name, from_token)
 
         arguments = {}
@@ -242,6 +248,9 @@ class Manager(Agent):
     async def handle_unsubscribe(self, from_token, **body):
         channel = await self.data_connection.channel()
         queue_name = body["dataQueue"]
+        if not (queue_name.starts_with(from_token) and queue_name.ends_with("-data")):
+            raise ValueError("Invalid subscription queue name")
+
         logger.debug("unbinding queue {} for {}", queue_name, from_token)
 
         try:
@@ -283,10 +292,14 @@ class Manager(Agent):
                 "release {} for {} ignored, auto-delete", body["dataQueue"], from_token
             )
         else:
-            logger.debug("releasing {} for {}", body["dataQueue"], from_token)
-            queue = await self.data_channel.declare_queue(
-                body["dataQueue"], robust=False
-            )
+            queue_name = body["dataQueue"]
+            if not (
+                queue_name.starts_with(from_token) and queue_name.ends_with("-data")
+            ):
+                raise ValueError("Invalid subscription queue name")
+
+            logger.debug("releasing {} for {}", queue_name, from_token)
+            queue = await self.data_channel.declare_queue(queue_name, robust=False)
             await queue.delete(if_unused=False, if_empty=False)
 
     @rpc_handler("sink.register")
@@ -325,6 +338,8 @@ class Manager(Agent):
                 # No TTL set
                 pass
 
+        # TODO fix queue name
+        # data_queue_name = f"{from_token}-data"
         data_queue_name = "data-" + from_token
         logger.debug(
             "attempting to declare queue {} for {}", data_queue_name, from_token
@@ -425,8 +440,7 @@ class Manager(Agent):
 
     @rpc_handler("history.register")
     async def handle_history_register(self, from_token, **body):
-        history_uuid = from_token
-        history_queue_name = "history-" + history_uuid
+        history_queue_name = f"{from_token}-history"
         logger.debug(
             "attempting to declare queue {} for {}", history_queue_name, from_token
         )
@@ -586,6 +600,8 @@ class Manager(Agent):
         if not metric_configs:
             raise ValueError("db not properly configured, metrics empty")
 
+        # TODO Fix naming
+        # history_queue_name = f"{from_token}-hreq"
         history_queue_name = "history-" + db_uuid
         logger.debug(
             "attempting to declare queue {} for {}", history_queue_name, from_token
@@ -595,6 +611,8 @@ class Manager(Agent):
         )
         logger.debug("declared queue {} for {}", history_queue, from_token)
 
+        # TODO Fix naming
+        # history_queue_name = f"{from_token}-hrsp"
         data_queue_name = "data-" + db_uuid
         logger.debug(
             "attempting to declare queue {} for {}", data_queue_name, from_token
