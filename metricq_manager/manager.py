@@ -440,7 +440,7 @@ class Manager(Agent):
 
     @rpc_handler("history.register")
     async def handle_history_register(self, from_token, **body):
-        history_queue_name = f"{from_token}-history"
+        history_queue_name = f"{from_token}-hrsp"
         logger.debug(
             "attempting to declare queue {} for {}", history_queue_name, from_token
         )
