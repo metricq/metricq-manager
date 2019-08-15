@@ -246,8 +246,9 @@ class Manager(Agent):
     async def handle_unsubscribe(self, from_token, **body):
         channel = await self.data_connection.channel()
         queue_name = body["dataQueue"]
-        if not (queue_name.startswith(from_token) and queue_name.endswith("-data")):
-            raise ValueError("Invalid subscription queue name")
+        # TODO add once we get consistent tokens for subscription / unsubscription
+        # if not (queue_name.startswith(from_token) and queue_name.endswith("-data")):
+        #     raise ValueError("Invalid subscription queue name")
 
         logger.debug("unbinding queue {} for {}", queue_name, from_token)
 
