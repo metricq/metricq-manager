@@ -316,14 +316,7 @@ class Manager(Agent):
         }
         return response
 
-    @rpc_handler("transformer.register")
-    async def handle_transformer_register(self, from_token, **body):
-        response = await self.handle_source_register(from_token, **body)
-        return response
-
-    @rpc_handler("transformer.subscribe")
-    async def handle_transformer_subscribe(self, from_token, metrics, **body):
-        config = await self.read_config(from_token)
+    def _get_queue_arguments_from_config(self, config):
         arguments = dict()
         try:
             arguments["x-message-ttl"] = int(1000 * config["message_ttl"])
@@ -334,6 +327,18 @@ class Manager(Agent):
             except KeyError:
                 # No TTL set
                 pass
+
+        return arguments
+
+    @rpc_handler("transformer.register")
+    async def handle_transformer_register(self, from_token, **body):
+        response = await self.handle_source_register(from_token, **body)
+        return response
+
+    @rpc_handler("transformer.subscribe")
+    async def handle_transformer_subscribe(self, from_token, metrics, **body):
+        config = await self.read_config(from_token)
+        arguments = self._get_queue_arguments_from_config(config)
 
         # TODO fix queue name
         # data_queue_name = f"{from_token}-data"
@@ -437,12 +442,15 @@ class Manager(Agent):
 
     @rpc_handler("history.register")
     async def handle_history_register(self, from_token, **body):
+        config = await self.read_config(from_token)
+        arguments = self._get_queue_arguments_from_config(config)
+
         history_queue_name = f"{from_token}-hrsp"
         logger.debug(
             "attempting to declare queue {} for {}", history_queue_name, from_token
         )
         history_queue = await self.data_channel.declare_queue(
-            history_queue_name, auto_delete=True, robust=False
+            history_queue_name, auto_delete=True, arguments=arguments, robust=False
         )
         logger.debug("declared queue {} for {}", history_queue, from_token)
 
@@ -451,7 +459,7 @@ class Manager(Agent):
             "dataServerAddress": self.data_url_credentialfree,
             "historyExchange": self.history_exchange.name,
             "historyQueue": history_queue_name,
-            "config": await self.read_config(from_token),
+            "config": config,
         }
         return response
 
@@ -593,6 +601,7 @@ class Manager(Agent):
         db_uuid = from_token
 
         config = await self.read_config(from_token)
+        arguments = self._get_queue_arguments_from_config(config)
         metric_configs = config["metrics"]
         if not metric_configs:
             raise ValueError("db not properly configured, metrics empty")
@@ -604,7 +613,7 @@ class Manager(Agent):
             "attempting to declare queue {} for {}", history_queue_name, from_token
         )
         history_queue = await self.data_channel.declare_queue(
-            history_queue_name, durable=True, robust=False
+            history_queue_name, durable=True, arguments=arguments, robust=False
         )
         logger.debug("declared queue {} for {}", history_queue, from_token)
 
@@ -615,7 +624,7 @@ class Manager(Agent):
             "attempting to declare queue {} for {}", data_queue_name, from_token
         )
         data_queue = await self.data_channel.declare_queue(
-            data_queue_name, durable=True, robust=False
+            data_queue_name, durable=True, arguments=arguments, robust=False
         )
         logger.debug("declared queue {} for {}", data_queue, from_token)
 
