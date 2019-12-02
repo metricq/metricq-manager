@@ -167,18 +167,6 @@ class Manager(ManagementAgent):
             self.management_queue_name, durable=True, robust=True
         )
 
-        logger.info("creating rpc exchanges")
-        self._management_exchange = await self._management_channel.declare_exchange(
-            name=self._management_exchange_name,
-            type=aio_pika.ExchangeType.TOPIC,
-            durable=True,
-        )
-        self._management_broadcast_exchange = await self._management_channel.declare_exchange(
-            name=self._management_broadcast_exchange_name,
-            type=aio_pika.ExchangeType.FANOUT,
-            durable=True,
-        )
-
         await self.management_queue.bind(
             exchange=self._management_exchange, routing_key="#"
         )
