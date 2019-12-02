@@ -35,7 +35,7 @@ import aiomonitor
 import click_completion
 import click_log
 from aiocouch import CouchDB
-from metricq import Agent, rpc_handler
+from metricq import ManagementAgent, rpc_handler
 from metricq.logging import get_logger
 from yarl import URL
 
@@ -52,7 +52,7 @@ logger.handlers[0].formatter = logging.Formatter(
 click_completion.init()
 
 
-class Manager(Agent):
+class Manager(ManagementAgent):
     def __init__(
         self,
         management_url,
@@ -63,7 +63,9 @@ class Manager(Agent):
         couchdb_user,
         couchdb_password,
     ):
-        super().__init__("manager", management_url)
+        super().__init__(
+            "manager", management_url, couchdb_url, couchdb_user, couchdb_password
+        )
 
         self.management_queue_name = "management"
         self.management_queue = None
@@ -96,15 +98,6 @@ class Manager(Agent):
 
         self.config_path = config_path
         self.queue_ttl = queue_ttl
-
-        self.couchdb_client = CouchDB(
-            couchdb_url,
-            user=couchdb_user,
-            password=couchdb_password,
-            loop=self.event_loop,
-        )
-        self.couchdb_db_config = None
-        self.couchdb_db_metadata = None
 
         # TODO if this proves to be reliable, remove the option
         self._subscription_autodelete = True
