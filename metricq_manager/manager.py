@@ -152,7 +152,7 @@ class Manager(Agent):
 
         await self.rpc_consume([self.management_queue])
 
-    async def stop(self):
+    async def stop(self, exception):
         logger.debug("closing data channel and connection in manager")
         if self.data_channel:
             await self.data_channel.close()
@@ -160,7 +160,7 @@ class Manager(Agent):
         if self.data_connection:
             await self.data_connection.close()
             self.data_connection = None
-        await super().stop()
+        await super().stop(exception)
 
     async def read_config(self, token):
         try:

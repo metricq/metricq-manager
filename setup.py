@@ -37,7 +37,7 @@ setup(
         "click-completion",
         "click-log",
         "colorama",
-        "metricq",
+        "metricq~=1.1",
         "aiocouch",
         "yarl",
     ],
