@@ -185,12 +185,12 @@ class Manager(Agent):
     @rpc_handler("subscribe", "sink.subscribe")
     async def handle_subscribe(self, from_token, metadata=True, **body):
         # TODO figure out why auto-assigned queues cannot be used by the client
-        try:
-            # TODO check if naming is allowed...
-            queue_name = body["dataQueue"]
+        # TODO check if naming is allowed...
+        queue_name = body.get("dataQueue")
+        if queue_name is not None:
             if not (queue_name.startswith(from_token) and queue_name.endswith("-data")):
                 raise ValueError("Invalid subscription queue name")
-        except KeyError:
+        else:
             uid = uuid.uuid4().hex
             queue_name = f"{from_token}-{uid}-data"
         logger.debug("attempting to declare queue {} for {}", queue_name, from_token)
