@@ -340,9 +340,7 @@ class Manager(Agent):
         config = await self.read_config(from_token)
         arguments = self._get_queue_arguments_from_config(config)
 
-        # TODO fix queue name
-        # data_queue_name = f"{from_token}-data"
-        data_queue_name = "data-" + from_token
+        data_queue_name = f"{from_token}-data"
         logger.debug(
             "attempting to declare queue {} for {}", data_queue_name, from_token
         )
@@ -606,9 +604,7 @@ class Manager(Agent):
         if not metric_configs:
             raise ValueError("db not properly configured, metrics empty")
 
-        # TODO Fix naming
-        # history_queue_name = f"{from_token}-hreq"
-        history_queue_name = "history-" + db_uuid
+        history_queue_name = f"{from_token}-hreq"
         logger.debug(
             "attempting to declare queue {} for {}", history_queue_name, from_token
         )
@@ -617,9 +613,7 @@ class Manager(Agent):
         )
         logger.debug("declared queue {} for {}", history_queue, from_token)
 
-        # TODO Fix naming
-        # history_queue_name = f"{from_token}-hrsp"
-        data_queue_name = "data-" + db_uuid
+        data_queue_name = f"{from_token}-data"
         logger.debug(
             "attempting to declare queue {} for {}", data_queue_name, from_token
         )
