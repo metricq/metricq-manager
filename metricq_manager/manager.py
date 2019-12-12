@@ -321,12 +321,8 @@ class Manager(Agent):
         try:
             arguments["x-message-ttl"] = int(1000 * config["message_ttl"])
         except KeyError:
-            try:
-                # TODO deprecate either :/
-                arguments["x-message-ttl"] = int(1000 * config["messageTtl"])
-            except KeyError:
-                # No TTL set
-                pass
+            # No TTL set
+            pass
 
         return arguments
 
