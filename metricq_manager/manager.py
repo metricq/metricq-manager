@@ -64,7 +64,12 @@ class Manager(ManagementAgent):
         couchdb_password,
     ):
         super().__init__(
-            "manager", management_url, couchdb_url, couchdb_user, couchdb_password
+            "manager",
+            management_url,
+            config_path,
+            couchdb_url,
+            couchdb_user,
+            couchdb_password,
         )
 
         self.management_queue_name = "management"
