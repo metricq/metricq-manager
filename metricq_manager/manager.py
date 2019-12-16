@@ -163,12 +163,7 @@ class Manager(Agent):
         await super().stop(exception)
 
     async def read_config(self, token):
-        try:
-            return (await self.couchdb_db_config[token]).data
-        except KeyError:
-            # TODO use aiofile
-            with open(os.path.join(self.config_path, token + ".json"), "r") as f:
-                return json.load(f)
+        return (await self.couchdb_db_config[token]).data
 
     async def rpc(self, function, to_token=None, **kwargs):
         if to_token:
