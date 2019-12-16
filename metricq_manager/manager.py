@@ -190,8 +190,11 @@ class Manager(Agent):
             queue_name = f"{from_token}-{uid}-data"
         logger.debug("attempting to declare queue {} for {}", queue_name, from_token)
 
-        config = await self.read_config(from_token)
-        arguments = self._get_queue_arguments_from_config(config)
+        try:
+            config = await self.read_config(from_token)
+            arguments = self._get_queue_arguments_from_config(config)
+        except KeyError:
+            arguments = {}
         try:
             expires_seconds = int(body["expires"])
             if expires_seconds <= 0:
