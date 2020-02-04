@@ -435,7 +435,10 @@ class Manager(Agent):
 
     @rpc_handler("history.register")
     async def handle_history_register(self, from_token, **body):
-        config = await self.read_config(from_token)
+        try:
+            config = await self.read_config(from_token)
+        except KeyError:
+            config = {}
         arguments = self._get_queue_arguments_from_config(config)
 
         history_queue_name = f"{from_token}-hrsp"
