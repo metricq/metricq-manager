@@ -614,10 +614,7 @@ class Manager(Agent):
         metric_names = []
         for name, metric_config in metric_configs.items():
             if "prefix" in metric_config and metric_config["prefix"]:
-                history_routing_keys.append(name + ".#")
-                data_routing_keys.append(name + ".#")
-                # TODO fetch pattern from DB
-                # This won't work with the db metadata
+                raise ValueError("prefix no longer supported in the manager")
             elif "input" in metric_config:
                 history_routing_keys.append(name)
                 data_routing_keys.append(metric_config["input"])
