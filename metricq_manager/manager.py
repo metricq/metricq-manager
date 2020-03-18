@@ -594,8 +594,6 @@ class Manager(Agent):
 
     @rpc_handler("db.register")
     async def handle_db_register(self, from_token, metadata=False, **body):
-        db_uuid = from_token
-
         config = await self.read_config(from_token)
         arguments = self._get_queue_arguments_from_config(config)
         metric_configs = config["metrics"]
@@ -603,46 +601,31 @@ class Manager(Agent):
             raise ValueError("db not properly configured, metrics empty")
 
         history_queue_name = f"{from_token}-hreq"
-        logger.debug(
-            "attempting to declare queue {} for {}", history_queue_name, from_token
-        )
         history_queue = await self.data_channel.declare_queue(
             history_queue_name, durable=True, arguments=arguments, robust=False
         )
-        logger.debug("declared queue {} for {}", history_queue, from_token)
-
         data_queue_name = f"{from_token}-data"
-        logger.debug(
-            "attempting to declare queue {} for {}", data_queue_name, from_token
-        )
         data_queue = await self.data_channel.declare_queue(
             data_queue_name, durable=True, arguments=arguments, robust=False
         )
-        logger.debug("declared queue {} for {}", data_queue, from_token)
 
-        if isinstance(metric_configs, list):
-            # old legacy mode
-            metric_names = history_routing_keys = data_routing_keys = [
-                metric["name"] for metric in metric_configs
-            ]
-        else:
-            history_routing_keys = []
-            data_routing_keys = []
-            metric_names = []
-            for name, metric_config in metric_configs.items():
-                if "prefix" in metric_config and metric_config["prefix"]:
-                    history_routing_keys.append(name + ".#")
-                    data_routing_keys.append(name + ".#")
-                    # TODO fetch pattern from DB
-                    # This won't work with the db metadata
-                elif "input" in metric_config:
-                    history_routing_keys.append(name)
-                    data_routing_keys.append(metric_config["input"])
-                    metric_names.append(name)
-                else:
-                    history_routing_keys.append(name)
-                    data_routing_keys.append(name)
-                    metric_names.append(name)
+        history_routing_keys = []
+        data_routing_keys = []
+        metric_names = []
+        for name, metric_config in metric_configs.items():
+            if "prefix" in metric_config and metric_config["prefix"]:
+                history_routing_keys.append(name + ".#")
+                data_routing_keys.append(name + ".#")
+                # TODO fetch pattern from DB
+                # This won't work with the db metadata
+            elif "input" in metric_config:
+                history_routing_keys.append(name)
+                data_routing_keys.append(metric_config["input"])
+                metric_names.append(name)
+            else:
+                history_routing_keys.append(name)
+                data_routing_keys.append(name)
+                metric_names.append(name)
 
         binds = []
 
