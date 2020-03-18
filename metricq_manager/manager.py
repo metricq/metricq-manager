@@ -593,7 +593,7 @@ class Manager(Agent):
             raise RuntimeError("metadata update failed")
 
     @rpc_handler("db.register")
-    async def handle_db_register(self, from_token, metadata=False, **body):
+    async def handle_db_register(self, from_token, **body):
         config = await self.read_config(from_token)
         arguments = self._get_queue_arguments_from_config(config)
         metric_configs = config["metrics"]
@@ -651,8 +651,6 @@ class Manager(Agent):
             "historyQueue": history_queue_name,
             "config": config,
         }
-        if metadata:
-            response["metrics"] = await self.fetch_metadata(metric_names)
         return response
 
 
