@@ -592,63 +592,96 @@ class Manager(Agent):
         if error:
             raise RuntimeError("metadata update failed")
 
+    async def _declare_db_queues(self, db_token, config=None):
+        if not config:
+            config = await self.read_config(db_token)
+
+        # TODO actually we do probably want separate message ttl for history requests and data!
+        kwargs = {
+            "arguments": self._get_queue_arguments_from_config(config),
+            "durable": True,
+            "robust": False,
+        }
+
+        return await asyncio.gather(
+            self.data_channel.declare_queue(f"{db_token}-data", **kwargs),
+            self.data_channel.declare_queue(f"{db_token}-hreq", **kwargs),
+        )
+
+    @rpc_handler("db.subscribe")
+    async def handle_db_subscribe(self, from_token, metrics, metadata=True, **body):
+        data_queue, history_queue = await self._declare_db_queues(from_token)
+
+        bindings = []
+        metric_names = []
+        for metric in metrics:
+            if isinstance(metric, str):
+                data_routing_key = metric
+                history_routing_key = metric
+            else:
+                data_routing_key = metric["name"]
+                history_routing_key = metric["name"]
+
+            metric_names.append(history_routing_key)
+            bindings.append(
+                history_queue.bind(
+                    exchange=self.history_exchange, routing_key=history_routing_key
+                )
+            )
+            bindings.append(
+                data_queue.bind(
+                    exchange=self.data_exchange, routing_key=data_routing_key
+                )
+            )
+
+        await asyncio.gather(*bindings)
+        # TODO unbind other metrics that are no longer relevant
+        await self._mark_db_metrics(metric_names)
+
+        if metadata:
+            metrics = await self.fetch_metadata(metric_names)
+        else:
+            metrics = metric_names
+
+        return {
+            "dataServerAddress": self.data_url_credentialfree,
+            "dataQueue": data_queue.name,
+            "historyQueue": history_queue.name,
+            "metrics": metrics,
+        }
+
     @rpc_handler("db.register")
     async def handle_db_register(self, from_token, **body):
         config = await self.read_config(from_token)
-        arguments = self._get_queue_arguments_from_config(config)
         metric_configs = config["metrics"]
         if not metric_configs:
             raise ValueError("db not properly configured, metrics empty")
 
-        history_queue_name = f"{from_token}-hreq"
-        history_queue = await self.data_channel.declare_queue(
-            history_queue_name, durable=True, arguments=arguments, robust=False
-        )
-        data_queue_name = f"{from_token}-data"
-        data_queue = await self.data_channel.declare_queue(
-            data_queue_name, durable=True, arguments=arguments, robust=False
-        )
-
-        history_routing_keys = []
-        data_routing_keys = []
-        metric_names = []
-        for name, metric_config in metric_configs.items():
+        # TODO once all deployed databases support an explicit subscribe, this part can be removed
+        # this emulates the RPC format of db.subscribe
+        def convert_metric_config(metric_name, metric_config):
             if "prefix" in metric_config and metric_config["prefix"]:
                 raise ValueError("prefix no longer supported in the manager")
             elif "input" in metric_config:
-                history_routing_keys.append(name)
-                data_routing_keys.append(metric_config["input"])
-                metric_names.append(name)
+                return {"name": metric_name, "input": metric_config["input"]}
             else:
-                history_routing_keys.append(name)
-                data_routing_keys.append(name)
-                metric_names.append(name)
+                return metric_name
 
-        binds = []
+        subscribe_metrics = [
+            convert_metric_config(metric_item) for metric_item in metric_configs.items()
+        ]
+        await self.handle_db_subscribe(
+            from_token, metrics=subscribe_metrics, metadata=False
+        )
+        # End of "removable" legacy stuff --- so we don't use the return value even if we could save some
 
-        for routing_key in history_routing_keys:
-            binds.append(
-                history_queue.bind(
-                    exchange=self.history_exchange, routing_key=routing_key
-                )
-            )
-        for routing_key in data_routing_keys:
-            binds.append(
-                data_queue.bind(exchange=self.data_exchange, routing_key=routing_key)
-            )
-
-        await asyncio.gather(*binds)
-        await self._mark_db_metrics(metric_names)
-
-        # TODO unbind other metrics that are no longer relevant
-
-        response = {
+        data_queue, history_queue = await self._declare_db_queues(from_token, config)
+        return {
             "dataServerAddress": self.data_url_credentialfree,
-            "dataQueue": data_queue_name,
-            "historyQueue": history_queue_name,
+            "dataQueue": data_queue.name,
+            "historyQueue": history_queue.name,
             "config": config,
         }
-        return response
 
 
 @click.command()
