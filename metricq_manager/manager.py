@@ -654,8 +654,6 @@ class Manager(Agent):
     async def handle_db_register(self, from_token, **body):
         config = await self.read_config(from_token)
         metric_configs = config["metrics"]
-        if not metric_configs:
-            raise ValueError("db not properly configured, metrics empty")
 
         # TODO once all deployed databases support an explicit subscribe, this part can be removed
         # this emulates the RPC format of db.subscribe
