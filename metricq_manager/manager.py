@@ -639,15 +639,15 @@ class Manager(Agent):
         await self._mark_db_metrics(metric_names)
 
         if metadata:
-            metrics = await self.fetch_metadata(metric_names)
+            metrics_return = await self.fetch_metadata(metric_names)
         else:
-            metrics = metric_names
+            metrics_return = metric_names
 
         return {
             "dataServerAddress": self.data_url_credentialfree,
             "dataQueue": data_queue.name,
             "historyQueue": history_queue.name,
-            "metrics": metrics,
+            "metrics": metrics_return,
         }
 
     @rpc_handler("db.register")
