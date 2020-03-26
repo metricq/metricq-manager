@@ -686,7 +686,7 @@ class Manager(Agent):
 
 @click.command()
 @click.argument("rpc-url", default="amqp://localhost/")
-@click.argument("data-url", default="amqp://localhost:5672/")
+@click.argument("data-url", default="amqp://localhost/")
 @click.option("--queue-ttl", default=30 * 60 * 1000)
 @click.option(
     "--config-path",
