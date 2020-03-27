@@ -103,14 +103,54 @@ class Manager(Agent):
             async for doc in self.couchdb_db_metadata.docs(metric_ids, create=True)
         }
 
-    async def connect(self):
-        # First, connect to couchdb
+    async def connect_couchdb(self):
         self.couchdb_db_config = await self.couchdb_client.create(
             "config", exists_ok=True
         )
         self.couchdb_db_metadata = await self.couchdb_client.create(
             "metadata", exists_ok=True
         )
+
+        index = await self.couchdb_db_metadata.design_doc("index", exists_ok=True)
+        await index.create_view(
+            "source",
+            map_function="function (doc) { if(doc.source) { emit(doc.source, doc._id); } }",
+            exists_ok=True,
+        )
+
+        await index.create_view(
+            "historic",
+            map_function="function (doc) { if(doc.historic) { emit(doc._id, null); } }",
+            exists_ok=True,
+        )
+
+        components = await self.couchdb_db_metadata.design_doc(
+            "components", exists_ok=True
+        )
+        await components.create_view(
+            "historic",
+            map_function="""function (doc) {
+  if(doc.historic)
+  {
+    var name = ''
+    var components = doc._id.split('.')
+    components.reverse()
+    components.forEach(function (key) {
+      if (name === '') {
+        name = key
+      } else {
+        name = key + '.' + name
+      }
+      emit(name, null)
+    })
+  }
+}""",
+            exists_ok=True,
+        )
+
+    async def connect(self):
+        # First, connect to couchdb
+        await self.connect_couchdb()
 
         # After that, we do the MetricQ connection stuff
         await super().connect()
