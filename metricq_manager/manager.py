@@ -71,8 +71,16 @@ class Manager(Agent):
         self.data_connection = None
         self.data_channel = None
 
-        self.data_url = data_url
-        self.data_url_credentialfree = str(URL(data_url).with_user(None))
+        if data_url.startswith("/"):  # vhost only
+            # for the manager itself
+            self.data_url = str(URL(self.management_url).with_path(data_url))
+            # for clients
+            self.data_server_address = data_url
+        else:
+            # for the manager itself
+            self.data_url = data_url
+            # for clients
+            self.data_server_address = str(URL(data_url).with_user(None))
 
         self.data_exchange_name = "metricq.data"
         self.data_exchange = None
@@ -236,7 +244,7 @@ class Manager(Agent):
             metrics = await self.fetch_metadata(metric_ids)
 
         return {
-            "dataServerAddress": self.data_url_credentialfree,
+            "dataServerAddress": self.data_server_address,
             "dataQueue": queue.name,
             "metrics": metrics,
         }
@@ -278,7 +286,7 @@ class Manager(Agent):
 
         self.event_loop.call_soon(asyncio.ensure_future, channel.close())
         return {
-            "dataServerAddress": self.data_url_credentialfree,
+            "dataServerAddress": self.data_server_address,
             "dataQueue": queue_name,
             "metrics": metrics,
         }
@@ -301,7 +309,7 @@ class Manager(Agent):
     @rpc_handler("sink.register")
     async def handle_sink_register(self, from_token, **body):
         response = {
-            "dataServerAddress": self.data_url_credentialfree,
+            "dataServerAddress": self.data_server_address,
             "config": await self.read_config(from_token),
         }
         return response
@@ -309,7 +317,7 @@ class Manager(Agent):
     @rpc_handler("source.register")
     async def handle_source_register(self, from_token, **body):
         response = {
-            "dataServerAddress": self.data_url_credentialfree,
+            "dataServerAddress": self.data_server_address,
             "dataExchange": self.data_exchange.name,
             "config": await self.read_config(from_token),
         }
@@ -352,7 +360,7 @@ class Manager(Agent):
 
         # TODO unbind other metrics that are no longer relevant
         response = dict()
-        response["dataServerAddress"] = self.data_url_credentialfree
+        response["dataServerAddress"] = self.data_server_address
         response["dataQueue"] = data_queue_name
         response["metrics"] = await self.fetch_metadata(metrics)
         return response
@@ -451,8 +459,8 @@ class Manager(Agent):
         logger.debug("declared queue {} for {}", history_queue, from_token)
 
         response = {
-            "historyServerAddress": self.data_url_credentialfree,
-            "dataServerAddress": self.data_url_credentialfree,
+            "historyServerAddress": self.data_server_address,
+            "dataServerAddress": self.data_server_address,
             "historyExchange": self.history_exchange.name,
             "historyQueue": history_queue_name,
             "config": config,
@@ -644,7 +652,7 @@ class Manager(Agent):
             metrics_return = metric_names
 
         return {
-            "dataServerAddress": self.data_url_credentialfree,
+            "dataServerAddress": self.data_server_address,
             "dataQueue": data_queue.name,
             "historyQueue": history_queue.name,
             "metrics": metrics_return,
@@ -666,7 +674,8 @@ class Manager(Agent):
                 return metric_name
 
         subscribe_metrics = [
-            convert_metric_config(metric_item) for metric_item in metric_configs.items()
+            convert_metric_config(*metric_item)
+            for metric_item in metric_configs.items()
         ]
         await self.handle_db_subscribe(
             from_token, metrics=subscribe_metrics, metadata=False
@@ -675,7 +684,7 @@ class Manager(Agent):
 
         data_queue, history_queue = await self._declare_db_queues(from_token, config)
         return {
-            "dataServerAddress": self.data_url_credentialfree,
+            "dataServerAddress": self.data_server_address,
             "dataQueue": data_queue.name,
             "historyQueue": history_queue.name,
             "config": config,
