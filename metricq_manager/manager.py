@@ -73,7 +73,7 @@ class Manager(Agent):
 
         if data_url.startswith("/"):  # vhost only
             # for the manager itself
-            self.data_url = str(URL(self.management_url).with_path(data_url))
+            self.data_url = str(URL(self._management_url).with_path(data_url))
             # for clients
             self.data_server_address = data_url
         else:
