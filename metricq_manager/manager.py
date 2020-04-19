@@ -71,16 +71,22 @@ class Manager(Agent):
         self.data_connection = None
         self.data_channel = None
 
-        if data_url.startswith("/"):  # vhost only
+        # This is very similar to Agent.derive_address, but we also set the data_server_address for clients
+        vhost_prefix = "vhost:"
+        if data_url.startswith(vhost_prefix):  # vhost only
             # for the manager itself
-            self.data_url = str(URL(self._management_url).with_path(data_url))
+            self.data_url = str(
+                URL(self._management_url).with_path(data_url[len(vhost_prefix) :])
+            )
             # for clients
             self.data_server_address = data_url
         else:
             # for the manager itself
             self.data_url = data_url
             # for clients
-            self.data_server_address = str(URL(data_url).with_user(None))
+            self.data_server_address = str(
+                URL(data_url).with_password(None).with_user(None)
+            )
 
         self.data_exchange_name = "metricq.data"
         self.data_exchange = None
