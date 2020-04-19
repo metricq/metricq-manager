@@ -71,8 +71,22 @@ class Manager(Agent):
         self.data_connection = None
         self.data_channel = None
 
-        self.data_url = data_url
-        self.data_url_credentialfree = str(URL(data_url).with_user(None))
+        # This is very similar to Agent.derive_address, but we also set the data_server_address for clients
+        vhost_prefix = "vhost:"
+        if data_url.startswith(vhost_prefix):  # vhost only
+            # for the manager itself
+            self.data_url = str(
+                URL(self._management_url).with_path(data_url[len(vhost_prefix) :])
+            )
+            # for clients
+            self.data_server_address = data_url
+        else:
+            # for the manager itself
+            self.data_url = data_url
+            # for clients
+            self.data_server_address = str(
+                URL(data_url).with_password(None).with_user(None)
+            )
 
         self.data_exchange_name = "metricq.data"
         self.data_exchange = None
@@ -276,7 +290,7 @@ class Manager(Agent):
             metrics = await self.fetch_metadata(metric_ids)
 
         return {
-            "dataServerAddress": self.data_url_credentialfree,
+            "dataServerAddress": self.data_server_address,
             "dataQueue": queue.name,
             "metrics": metrics,
         }
@@ -318,7 +332,7 @@ class Manager(Agent):
 
         self.event_loop.call_soon(asyncio.ensure_future, channel.close())
         return {
-            "dataServerAddress": self.data_url_credentialfree,
+            "dataServerAddress": self.data_server_address,
             "dataQueue": queue_name,
             "metrics": metrics,
         }
@@ -341,7 +355,7 @@ class Manager(Agent):
     @rpc_handler("sink.register")
     async def handle_sink_register(self, from_token, **body):
         response = {
-            "dataServerAddress": self.data_url_credentialfree,
+            "dataServerAddress": self.data_server_address,
             "config": await self.read_config(from_token),
         }
         return response
@@ -349,7 +363,7 @@ class Manager(Agent):
     @rpc_handler("source.register")
     async def handle_source_register(self, from_token, **body):
         response = {
-            "dataServerAddress": self.data_url_credentialfree,
+            "dataServerAddress": self.data_server_address,
             "dataExchange": self.data_exchange.name,
             "config": await self.read_config(from_token),
         }
@@ -392,7 +406,7 @@ class Manager(Agent):
 
         # TODO unbind other metrics that are no longer relevant
         response = dict()
-        response["dataServerAddress"] = self.data_url_credentialfree
+        response["dataServerAddress"] = self.data_server_address
         response["dataQueue"] = data_queue_name
         response["metrics"] = await self.fetch_metadata(metrics)
         return response
@@ -491,8 +505,8 @@ class Manager(Agent):
         logger.debug("declared queue {} for {}", history_queue, from_token)
 
         response = {
-            "historyServerAddress": self.data_url_credentialfree,
-            "dataServerAddress": self.data_url_credentialfree,
+            "historyServerAddress": self.data_server_address,
+            "dataServerAddress": self.data_server_address,
             "historyExchange": self.history_exchange.name,
             "historyQueue": history_queue_name,
             "config": config,
@@ -632,90 +646,100 @@ class Manager(Agent):
         if error:
             raise RuntimeError("metadata update failed")
 
-    @rpc_handler("db.register")
-    async def handle_db_register(self, from_token, metadata=False, **body):
-        db_uuid = from_token
+    async def _declare_db_queues(self, db_token, config=None):
+        if not config:
+            config = await self.read_config(db_token)
 
-        config = await self.read_config(from_token)
-        arguments = self._get_queue_arguments_from_config(config)
-        metric_configs = config["metrics"]
-        if not metric_configs:
-            raise ValueError("db not properly configured, metrics empty")
+        # TODO actually we do probably want separate message ttl for history requests and data!
+        kwargs = {
+            "arguments": self._get_queue_arguments_from_config(config),
+            "durable": True,
+            "robust": False,
+        }
 
-        history_queue_name = f"{from_token}-hreq"
-        logger.debug(
-            "attempting to declare queue {} for {}", history_queue_name, from_token
+        return await asyncio.gather(
+            self.data_channel.declare_queue(f"{db_token}-data", **kwargs),
+            self.data_channel.declare_queue(f"{db_token}-hreq", **kwargs),
         )
-        history_queue = await self.data_channel.declare_queue(
-            history_queue_name, durable=True, arguments=arguments, robust=False
-        )
-        logger.debug("declared queue {} for {}", history_queue, from_token)
 
-        data_queue_name = f"{from_token}-data"
-        logger.debug(
-            "attempting to declare queue {} for {}", data_queue_name, from_token
-        )
-        data_queue = await self.data_channel.declare_queue(
-            data_queue_name, durable=True, arguments=arguments, robust=False
-        )
-        logger.debug("declared queue {} for {}", data_queue, from_token)
+    @rpc_handler("db.subscribe")
+    async def handle_db_subscribe(self, from_token, metrics, metadata=True, **body):
+        data_queue, history_queue = await self._declare_db_queues(from_token)
 
-        if isinstance(metric_configs, list):
-            # old legacy mode
-            metric_names = history_routing_keys = data_routing_keys = [
-                metric["name"] for metric in metric_configs
-            ]
-        else:
-            history_routing_keys = []
-            data_routing_keys = []
-            metric_names = []
-            for name, metric_config in metric_configs.items():
-                if "prefix" in metric_config and metric_config["prefix"]:
-                    history_routing_keys.append(name + ".#")
-                    data_routing_keys.append(name + ".#")
-                    # TODO fetch pattern from DB
-                    # This won't work with the db metadata
-                elif "input" in metric_config:
-                    history_routing_keys.append(name)
-                    data_routing_keys.append(metric_config["input"])
-                    metric_names.append(name)
-                else:
-                    history_routing_keys.append(name)
-                    data_routing_keys.append(name)
-                    metric_names.append(name)
+        bindings = []
+        metric_names = []
+        for metric in metrics:
+            if isinstance(metric, str):
+                data_routing_key = metric
+                history_routing_key = metric
+            else:
+                data_routing_key = metric["name"]
+                history_routing_key = metric["name"]
 
-        binds = []
-
-        for routing_key in history_routing_keys:
-            binds.append(
+            metric_names.append(history_routing_key)
+            bindings.append(
                 history_queue.bind(
-                    exchange=self.history_exchange, routing_key=routing_key
+                    exchange=self.history_exchange, routing_key=history_routing_key
                 )
             )
-        for routing_key in data_routing_keys:
-            binds.append(
-                data_queue.bind(exchange=self.data_exchange, routing_key=routing_key)
+            bindings.append(
+                data_queue.bind(
+                    exchange=self.data_exchange, routing_key=data_routing_key
+                )
             )
 
-        await asyncio.gather(*binds)
+        await asyncio.gather(*bindings)
+        # TODO unbind other metrics that are no longer relevant
         await self._mark_db_metrics(metric_names)
 
-        # TODO unbind other metrics that are no longer relevant
+        if metadata:
+            metrics_return = await self.fetch_metadata(metric_names)
+        else:
+            metrics_return = metric_names
 
-        response = {
-            "dataServerAddress": self.data_url_credentialfree,
-            "dataQueue": data_queue_name,
-            "historyQueue": history_queue_name,
+        return {
+            "dataServerAddress": self.data_server_address,
+            "dataQueue": data_queue.name,
+            "historyQueue": history_queue.name,
+            "metrics": metrics_return,
+        }
+
+    @rpc_handler("db.register")
+    async def handle_db_register(self, from_token, **body):
+        config = await self.read_config(from_token)
+        metric_configs = config["metrics"]
+
+        # TODO once all deployed databases support an explicit subscribe, this part can be removed
+        # this emulates the RPC format of db.subscribe
+        def convert_metric_config(metric_name, metric_config):
+            if "prefix" in metric_config and metric_config["prefix"]:
+                raise ValueError("prefix no longer supported in the manager")
+            elif "input" in metric_config:
+                return {"name": metric_name, "input": metric_config["input"]}
+            else:
+                return metric_name
+
+        subscribe_metrics = [
+            convert_metric_config(*metric_item)
+            for metric_item in metric_configs.items()
+        ]
+        await self.handle_db_subscribe(
+            from_token, metrics=subscribe_metrics, metadata=False
+        )
+        # End of "removable" legacy stuff --- so we don't use the return value even if we could save some
+
+        data_queue, history_queue = await self._declare_db_queues(from_token, config)
+        return {
+            "dataServerAddress": self.data_server_address,
+            "dataQueue": data_queue.name,
+            "historyQueue": history_queue.name,
             "config": config,
         }
-        if metadata:
-            response["metrics"] = await self.fetch_metadata(metric_names)
-        return response
 
 
 @click.command()
 @click.argument("rpc-url", default="amqp://localhost/")
-@click.argument("data-url", default="amqp://localhost:5672/")
+@click.argument("data-url", default="amqp://localhost/")
 @click.option("--queue-ttl", default=30 * 60 * 1000)
 @click.option(
     "--config-path",
