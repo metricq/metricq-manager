@@ -673,7 +673,10 @@ class Manager(Agent):
                 data_routing_key = metric
                 history_routing_key = metric
             else:
-                data_routing_key = metric["name"]
+                try:
+                    data_routing_key = metric["input"]
+                except KeyError:
+                    data_routing_key = metric["name"]
                 history_routing_key = metric["name"]
 
             metric_names.append(history_routing_key)
