@@ -7,7 +7,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-    - name: Repository Dispatch
+    - name: Repository Dispatch to main repo
       uses: peter-evans/repository-dispatch@v1
       with:
         token: ${{ secrets.METRICQ_REPO_ACCESS_TOKEN }}
