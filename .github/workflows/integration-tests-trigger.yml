@@ -8,9 +8,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Repository Dispatch to main repo
-      uses: peter-evans/repository-dispatch@v1
+      uses: kinnarr/dispatch-and-wait-action
       with:
         token: ${{ secrets.METRICQ_REPO_ACCESS_TOKEN }}
-        repository: metricq/metricq
+        owner: metricq
+        repo: metricq
         event-type: integration-test
         client-payload: '{"manager_ref": "${{ github.ref }}"}'
+        timeoutSeconds: '900'
