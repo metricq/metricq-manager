@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Repository Dispatch to main repo
-      uses: kinnarr/dispatch-and-wait-action
+      uses: kinnarr/dispatch-and-wait-action@a1ec5a5c74fee17ca84daababf527d0815ee520f
       with:
         token: ${{ secrets.METRICQ_REPO_ACCESS_TOKEN }}
         owner: metricq
