@@ -40,4 +40,12 @@ ENV data_url=$data_url
 
 VOLUME ["/home/metricq/manager/config"]
 
-CMD /home/metricq/wait-for-it.sh $wait_for_couchdb_url -- /home/metricq/wait-for-it.sh $wait_for_rabbitmq_url -- /home/metricq/venv/bin/metricq-manager --config-path /home/metricq/manager/config --couchdb-url $couchdb_url --couchdb-user $couchdb_user --couchdb-password $couchdb_pw $rpc_url $data_url
+CMD /home/metricq/wait-for-it.sh $wait_for_couchdb_url -- \
+    /home/metricq/wait-for-it.sh $wait_for_rabbitmq_url -- \
+    /home/metricq/venv/bin/metricq-manager \
+        --config-path /home/metricq/manager/config \
+        --couchdb-url $couchdb_url \
+        --couchdb-user $couchdb_user \
+        --couchdb-password $couchdb_pw \
+        $rpc_url \
+        $data_url

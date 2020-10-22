@@ -18,23 +18,32 @@
 # You should have received a copy of the GNU General Public License
 # along with metricq.  If not, see <http://www.gnu.org/licenses/>.
 
-import asyncio
 import datetime
 import logging
 import time
-import uuid
-from itertools import groupby, islice
-
-import click
+from itertools import islice
+from typing import Any, Dict, List, Optional, Tuple, TypedDict, Union
 
 import aio_pika
 import aiomonitor
+import click
 import click_completion
 import click_log
-from aiocouch import CouchDB
+from aiocouch import CouchDB, NotFoundError
 from metricq import Agent, rpc_handler
 from metricq.logging import get_logger
 from yarl import URL
+
+from .queue_manager import DataQueueName, HreqQueueName, QueueManager
+
+Metric = str
+MetricList = Union[List[Metric], Dict[Metric, Dict[str, Any]]]
+
+
+class MetricInputAlias(TypedDict):
+    input: Optional[Metric]
+    name: Metric
+
 
 logger = get_logger()
 
@@ -65,8 +74,7 @@ class Manager(Agent):
         self.management_queue_name = "management"
         self.management_queue = None
 
-        self.data_connection = None
-        self.data_channel = None
+        self.queue_manager: Optional[QueueManager] = None
 
         # This is very similar to Agent.derive_address, but we also set the data_server_address for clients
         vhost_prefix = "vhost:"
@@ -86,10 +94,7 @@ class Manager(Agent):
             )
 
         self.data_exchange_name = "metricq.data"
-        self.data_exchange = None
-
         self.history_exchange_name = "metricq.history"
-        self.history_exchange = None
 
         self.config_path = config_path
         self.queue_ttl = queue_ttl
@@ -177,10 +182,12 @@ class Manager(Agent):
             type=aio_pika.ExchangeType.TOPIC,
             durable=True,
         )
-        self._management_broadcast_exchange = await self._management_channel.declare_exchange(
-            name=self._management_broadcast_exchange_name,
-            type=aio_pika.ExchangeType.FANOUT,
-            durable=True,
+        self._management_broadcast_exchange = (
+            await self._management_channel.declare_exchange(
+                name=self._management_broadcast_exchange_name,
+                type=aio_pika.ExchangeType.FANOUT,
+                durable=True,
+            )
         )
 
         await self.management_queue.bind(
@@ -188,33 +195,36 @@ class Manager(Agent):
         )
 
         logger.info("establishing data connection to {}", self.data_url)
-        self.data_connection = await self.make_connection(self.data_url)
-        self.data_channel = await self.data_connection.channel()
+        data_connection = await self.make_connection(self.data_url)
 
-        logger.info("creating data exchanges")
-        self.data_exchange = await self.data_channel.declare_exchange(
-            name=self.data_exchange_name, type=aio_pika.ExchangeType.TOPIC, durable=True
+        assert self.couchdb_db_config is not None
+        self.queue_manager = QueueManager(
+            data_connection=data_connection,
+            config_db=self.couchdb_db_config,
         )
-        self.history_exchange = await self.data_channel.declare_exchange(
-            name=self.history_exchange_name,
-            type=aio_pika.ExchangeType.TOPIC,
-            durable=True,
-        )
+
+        # Make sure we can open a channel on the data connection.
+        # This channel will be reused by the QueueManager for as long as possible.
+        await self.queue_manager.ensure_open_channel()
+
+        # Declare the data and history exchanges
+        await self.queue_manager.declare_exchanges()
 
         await self.rpc_consume([self.management_queue])
 
     async def stop(self, exception):
-        logger.debug("closing data channel and connection in manager")
-        if self.data_channel:
-            await self.data_channel.close()
-            self.data_channel = None
-        if self.data_connection:
-            await self.data_connection.close()
-            self.data_connection = None
+        await self.queue_manager.close()
+
         await super().stop(exception)
 
-    async def read_config(self, token):
-        return (await self.couchdb_db_config[token]).data
+    async def read_config(self, token, *, allow_missing=False):
+        try:
+            return (await self.couchdb_db_config[token]).data
+        except NotFoundError:
+            if allow_missing:
+                return {}
+            else:
+                raise
 
     async def rpc(self, function, to_token=None, **kwargs):
         if to_token:
@@ -231,107 +241,52 @@ class Manager(Agent):
     @rpc_handler("subscribe", "sink.subscribe")
     async def handle_subscribe(self, from_token, metadata=True, **body):
         # TODO figure out why auto-assigned queues cannot be used by the client
-        # TODO check if naming is allowed...
-        queue_name = body.get("dataQueue")
-        if queue_name is not None:
-            if not (queue_name.startswith(from_token) and queue_name.endswith("-data")):
-                raise ValueError("Invalid subscription queue name")
-        else:
-            uid = uuid.uuid4().hex
-            queue_name = f"{from_token}-{uid}-data"
-        logger.debug("attempting to declare queue {} for {}", queue_name, from_token)
+        metrics = body.get("metrics", [])
 
-        try:
-            config = await self.read_config(from_token)
-            arguments = self._get_queue_arguments_from_config(config)
-        except KeyError:
-            arguments = {}
-        try:
-            expires_seconds = int(body["expires"])
-            if expires_seconds <= 0:
-                expires_seconds = self._expires_seconds
-        except (KeyError, ValueError, TypeError):
-            expires_seconds = self._expires_seconds
-        if expires_seconds:
-            arguments["x-expires"] = expires_seconds * 1000
-
-        queue = await self.data_channel.declare_queue(
-            queue_name,
-            auto_delete=self._subscription_autodelete,
-            arguments=arguments,
-            robust=False,
+        queue = await self.queue_manager.declare_sink_data_queue(
+            client_token=from_token,
+            queue_name=body.get("dataQueue"),
+            expires=body.get("expires"),
+            bindinds=metrics,
         )
-        logger.info("declared queue {} for {}", queue, from_token)
-        try:
-            metrics = body["metrics"]
-            if len(metrics) > 0:
-                res = await asyncio.gather(
-                    *[
-                        queue.bind(exchange=self.data_exchange, routing_key=rk)
-                        for rk in metrics
-                    ],
-                    loop=self.event_loop,
-                )
-                # TODO remove that later if it works stable
-                logger.info(
-                    "completed {} subscription bindings, result {}",
-                    len(metrics),
-                    [(len(list(g)), t) for t, g in groupby([type(r) for r in res])],
-                )
-        except KeyError:
-            logger.warn("Got no metric list, assuming no metrics")
-            metrics = []
 
-        if metadata:
-            metric_ids = metrics
-            metrics = await self.fetch_metadata(metric_ids)
+        logger.info(
+            "Declared data queue {!r} for {} (bound {} metric(s))",
+            queue,
+            from_token,
+            len(metrics),
+        )
+
+        metrics_metadata = await self.fetch_metadata(metrics) if metadata else metrics
 
         return {
             "dataServerAddress": self.data_server_address,
-            "dataQueue": queue.name,
-            "metrics": metrics,
+            "dataQueue": queue,
+            "metrics": metrics_metadata,
         }
 
     @rpc_handler("unsubscribe", "sink.unsubscribe")
     async def handle_unsubscribe(self, from_token, **body):
-        channel = await self.data_connection.channel()
-        queue_name = body["dataQueue"]
-        # TODO add once we get consistent tokens for subscription / unsubscription
-        # if not (queue_name.startswith(from_token) and queue_name.endswith("-data")):
-        #     raise ValueError("Invalid subscription queue name")
+        queue_name: str = body["dataQueue"]
+        metrics: List[str] = body["metrics"]
 
-        logger.debug("unbinding queue {} for {}", queue_name, from_token)
+        logger.debug(
+            "Unsubscribing client {!r} from {} metric(s)", from_token, len(metrics)
+        )
 
-        try:
-            queue = await channel.declare_queue(
-                queue_name,
-                auto_delete=self._subscription_autodelete,
-                passive=True,
-                robust=False,
-            )
-            assert body["metrics"]
-            await asyncio.gather(
-                *[
-                    queue.unbind(exchange=self.data_exchange, routing_key=rk)
-                    for rk in body["metrics"]
-                ],
-                loop=self.event_loop,
-            )
-            if body.get("end", True):
-                await self.data_channel.default_exchange.publish(
-                    aio_pika.Message(body=b"", type="end"), routing_key=queue_name
-                )
-        except aio_pika.exceptions.ChannelClosed as e:
-            logger.error("unsubscribe failed, queue timed out: {}", e)
-            raise Exception("queue already timed out")
+        await self.queue_manager.sink_unbind_metrics(
+            client_token=from_token,
+            queue_name=queue_name,
+            metrics=metrics,
+            publish_end_message=body.get("end", True),
+        )
 
-        metrics = await self.fetch_metadata(body["metrics"])
+        metrics_metadata = await self.fetch_metadata(metrics)
 
-        self.event_loop.call_soon(asyncio.ensure_future, channel.close())
         return {
             "dataServerAddress": self.data_server_address,
             "dataQueue": queue_name,
-            "metrics": metrics,
+            "metrics": metrics_metadata,
         }
 
     @rpc_handler("release", "sink.release")
@@ -345,9 +300,9 @@ class Manager(Agent):
             if not (queue_name.startswith(from_token) and queue_name.endswith("-data")):
                 raise ValueError("Invalid subscription queue name")
 
-            logger.debug("releasing {} for {}", queue_name, from_token)
-            queue = await self.data_channel.declare_queue(queue_name, robust=False)
-            await queue.delete(if_unused=False, if_empty=False)
+            logger.debug("Releasing data queue {} of Sink {!r}", queue_name, from_token)
+
+            await self.queue_manager.sink_delete_data_queue(queue_name)
 
     @rpc_handler("sink.register")
     async def handle_sink_register(self, from_token, **body):
@@ -361,7 +316,7 @@ class Manager(Agent):
     async def handle_source_register(self, from_token, **body):
         response = {
             "dataServerAddress": self.data_server_address,
-            "dataExchange": self.data_exchange.name,
+            "dataExchange": self.queue_manager.data_exchange.name,
             "config": await self.read_config(from_token),
         }
         return response
@@ -383,35 +338,23 @@ class Manager(Agent):
 
     @rpc_handler("transformer.subscribe")
     async def handle_transformer_subscribe(self, from_token, metrics, **body):
-        config = await self.read_config(from_token)
-        arguments = self._get_queue_arguments_from_config(config)
-
-        data_queue_name = f"{from_token}-data"
-        logger.debug(
-            "attempting to declare queue {} for {}", data_queue_name, from_token
-        )
-        data_queue = await self.data_channel.declare_queue(
-            data_queue_name, durable=True, arguments=arguments, robust=False
+        logger.debug("attempting to declare queue for {}", from_token)
+        data_queue = await self.queue_manager.declare_transformer_data_queue(
+            transformer_token=from_token,
+            bindinds=metrics,
         )
         logger.debug("declared queue {} for {}", data_queue, from_token)
 
-        bindings = [
-            data_queue.bind(exchange=self.data_exchange, routing_key=metric)
-            for metric in metrics
-        ]
-        await asyncio.gather(*bindings)
-
-        # TODO unbind other metrics that are no longer relevant
-        response = dict()
-        response["dataServerAddress"] = self.data_server_address
-        response["dataQueue"] = data_queue_name
-        response["metrics"] = await self.fetch_metadata(metrics)
-        return response
+        return {
+            "dataServerAddress": self.data_server_address,
+            "dataQueue": data_queue,
+            "metrics": await self.fetch_metadata(metrics),
+        }
 
     @rpc_handler("source.metrics_list", "transformer.metrics_list")
     async def handle_source_metadata(self, from_token, **body):
         logger.warning("called deprecated source.metrics_list by {}", from_token)
-        self.handle_source_declare_metrics(from_token, **body)
+        await self.handle_source_declare_metrics(from_token, **body)
 
     @rpc_handler("source.declare_metrics", "transformer.declare_metrics")
     async def handle_source_declare_metrics(self, from_token, metrics=None, **body):
@@ -486,26 +429,21 @@ class Manager(Agent):
 
     @rpc_handler("history.register")
     async def handle_history_register(self, from_token, **body):
-        try:
-            config = await self.read_config(from_token)
-        except KeyError:
-            config = {}
-        arguments = self._get_queue_arguments_from_config(config)
+        config = await self.read_config(from_token, allow_missing=True)
 
-        history_queue_name = f"{from_token}-hrsp"
         logger.debug(
-            "attempting to declare queue {} for {}", history_queue_name, from_token
+            "attempting to declare queue history response queue for {}", from_token
         )
-        history_queue = await self.data_channel.declare_queue(
-            history_queue_name, auto_delete=True, arguments=arguments, robust=False
+        history_queue = await self.queue_manager.declare_history_response_queue(
+            history_token=from_token
         )
         logger.debug("declared queue {} for {}", history_queue, from_token)
 
         response = {
             "historyServerAddress": self.data_server_address,
             "dataServerAddress": self.data_server_address,
-            "historyExchange": self.history_exchange.name,
-            "historyQueue": history_queue_name,
+            "historyExchange": self.queue_manager.history_exchange.name,
+            "historyQueue": history_queue,
             "config": config,
         }
         return response
@@ -643,66 +581,61 @@ class Manager(Agent):
         if error:
             raise RuntimeError("metadata update failed")
 
-    async def _declare_db_queues(self, db_token, config=None):
-        if not config:
-            config = await self.read_config(db_token)
-
-        # TODO actually we do probably want separate message ttl for history requests and data!
-        kwargs = {
-            "arguments": self._get_queue_arguments_from_config(config),
-            "durable": True,
-            "robust": False,
-        }
-
-        return await asyncio.gather(
-            self.data_channel.declare_queue(f"{db_token}-data", **kwargs),
-            self.data_channel.declare_queue(f"{db_token}-hreq", **kwargs),
-        )
-
     @rpc_handler("db.subscribe")
     async def handle_db_subscribe(self, from_token, metrics, metadata=True, **body):
-        data_queue, history_queue = await self._declare_db_queues(from_token)
-
-        bindings = []
-        metric_names = []
-        for metric in metrics:
-            if isinstance(metric, str):
-                data_routing_key = metric
-                history_routing_key = metric
-            else:
-                try:
-                    data_routing_key = metric["input"]
-                except KeyError:
-                    data_routing_key = metric["name"]
-                history_routing_key = metric["name"]
-
-            metric_names.append(history_routing_key)
-            bindings.append(
-                history_queue.bind(
-                    exchange=self.history_exchange, routing_key=history_routing_key
-                )
-            )
-            bindings.append(
-                data_queue.bind(
-                    exchange=self.data_exchange, routing_key=data_routing_key
-                )
-            )
-
-        await asyncio.gather(*bindings)
-        # TODO unbind other metrics that are no longer relevant
-        await self._mark_db_metrics(metric_names)
-
-        if metadata:
-            metrics_return = await self.fetch_metadata(metric_names)
-        else:
-            metrics_return = metric_names
+        data_queue, hreq_queue, metrics = await self.db_subscribe(
+            db_token=from_token, metrics=metrics, metadata=metadata
+        )
 
         return {
             "dataServerAddress": self.data_server_address,
-            "dataQueue": data_queue.name,
-            "historyQueue": history_queue.name,
-            "metrics": metrics_return,
+            "dataQueue": data_queue,
+            "historyQueue": hreq_queue,
+            "metrics": metrics,
         }
+
+    @staticmethod
+    def parse_db_bindings(
+        bindings: List[Union[Metric, MetricInputAlias]],
+    ) -> Tuple[List[Metric], List[Metric]]:
+        data_bindings: List[Metric] = []
+        history_bindings: List[Metric] = []
+
+        for metric in bindings:
+            data, hist = (
+                (metric, metric)
+                if isinstance(metric, str)
+                else (metric.get("input") or metric["name"], metric["name"])
+            )
+
+            data_bindings.append(data)
+            history_bindings.append(hist)
+
+        return data_bindings, history_bindings
+
+    async def db_subscribe(
+        self,
+        db_token: str,
+        metrics: List[Union[Metric, MetricInputAlias]],
+        metadata: bool,
+    ) -> Tuple[DataQueueName, HreqQueueName, MetricList]:
+        data_bindings, history_bindings = self.parse_db_bindings(bindings=metrics)
+
+        data_queue, history_queue = await self.queue_manager.declare_db_queues(
+            db_token=db_token,
+            data_bindings=data_bindings,
+            history_bindings=history_bindings,
+        )
+
+        # TODO unbind other metrics that are no longer relevant
+        await self._mark_db_metrics(history_bindings)
+
+        if metadata:
+            metrics_metadata = await self.fetch_metadata(history_bindings)
+        else:
+            metrics_metadata = history_bindings
+
+        return (data_queue, history_queue, metrics_metadata)
 
     @rpc_handler("db.register")
     async def handle_db_register(self, from_token, **body):
@@ -711,7 +644,9 @@ class Manager(Agent):
 
         # TODO once all deployed databases support an explicit subscribe, this part can be removed
         # this emulates the RPC format of db.subscribe
-        def convert_metric_config(metric_name, metric_config):
+        def convert_metric_config(
+            metric_name, metric_config
+        ) -> Union[Metric, MetricInputAlias]:
             if "prefix" in metric_config and metric_config["prefix"]:
                 raise ValueError("prefix no longer supported in the manager")
             elif "input" in metric_config:
@@ -723,16 +658,15 @@ class Manager(Agent):
             convert_metric_config(*metric_item)
             for metric_item in metric_configs.items()
         ]
-        await self.handle_db_subscribe(
+        data_queue, history_queue, _ = await self.db_subscribe(
             from_token, metrics=subscribe_metrics, metadata=False
         )
         # End of "removable" legacy stuff --- so we don't use the return value even if we could save some
 
-        data_queue, history_queue = await self._declare_db_queues(from_token, config)
         return {
             "dataServerAddress": self.data_server_address,
-            "dataQueue": data_queue.name,
-            "historyQueue": history_queue.name,
+            "dataQueue": data_queue,
+            "historyQueue": history_queue,
             "config": config,
         }
 
