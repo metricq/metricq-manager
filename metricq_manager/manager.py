@@ -45,6 +45,14 @@ class MetricInputAlias(TypedDict):
     name: Metric
 
 
+DbMetricbindings = List[Union[Metric, MetricInputAlias]]
+
+
+class LegacyMetricConfig(TypedDict):
+    input: Metric
+    prefix: str
+
+
 logger = get_logger()
 
 click_log.basic_config(logger)
@@ -592,7 +600,7 @@ class Manager(Agent):
 
     @staticmethod
     def parse_db_bindings(
-        bindings: List[Union[Metric, MetricInputAlias]],
+        bindings: DbMetricbindings,
     ) -> Tuple[List[Metric], List[Metric]]:
         data_bindings: List[Metric] = []
         history_bindings: List[Metric] = []
@@ -612,7 +620,7 @@ class Manager(Agent):
     async def db_subscribe(
         self,
         db_token: str,
-        metrics: List[Union[Metric, MetricInputAlias]],
+        metrics: DbMetricbindings,
         metadata: bool,
     ) -> Tuple[DataQueueName, HreqQueueName, MetricList]:
         data_bindings, history_bindings = self.parse_db_bindings(bindings=metrics)
@@ -633,15 +641,15 @@ class Manager(Agent):
 
         return (data_queue, history_queue, metrics_metadata)
 
-    @rpc_handler("db.register")
-    async def handle_db_register(self, from_token, **body):
-        config = await self.read_config(from_token)
-        metric_configs = config["metrics"]
-
+    @staticmethod
+    def db_parse_legacy_bindings(
+        metric_configs: Dict[Metric, LegacyMetricConfig]
+    ) -> DbMetricbindings:
+        """Parse a list of metric bindings from the `metric_configs` argument of a db.register call"""
         # TODO once all deployed databases support an explicit subscribe, this part can be removed
         # this emulates the RPC format of db.subscribe
         def convert_metric_config(
-            metric_name, metric_config
+            metric_name: Metric, metric_config: LegacyMetricConfig
         ) -> Union[Metric, MetricInputAlias]:
             if "prefix" in metric_config and metric_config["prefix"]:
                 raise ValueError("prefix no longer supported in the manager")
@@ -650,14 +658,33 @@ class Manager(Agent):
             else:
                 return metric_name
 
-        subscribe_metrics = [
+        return [
             convert_metric_config(*metric_item)
             for metric_item in metric_configs.items()
         ]
-        data_queue, history_queue, _ = await self.db_subscribe(
-            from_token, metrics=subscribe_metrics, metadata=False
-        )
-        # End of "removable" legacy stuff --- so we don't use the return value even if we could save some
+
+    @rpc_handler("db.register")
+    async def handle_db_register(self, from_token, **body):
+        config = await self.read_config(from_token)
+
+        data_queue: DataQueueName
+        history_queue: HreqQueueName
+
+        metric_configs = config.get("metrics")
+        if metric_configs:
+            logger.warn(
+                "Database {!r} relies on legacy behaviour to parse bindings from its config. "
+                "Make sure it explicitly calls `db.subscribe`!",
+                from_token,
+            )
+            bindings = self.db_parse_legacy_bindings(metric_configs)
+            data_queue, history_queue, _ = await self.db_subscribe(
+                from_token, metrics=bindings, metadata=False
+            )
+        else:
+            data_queue, history_queue = await self.queue_manager.declare_db_queues(
+                from_token
+            )
 
         return {
             "dataServerAddress": self.data_server_address,
