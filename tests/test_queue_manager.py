@@ -1,11 +1,11 @@
-from aio_pika.exchange import ExchangeType
-import pytest
-from pytest_mock import MockFixture
 from unittest.mock import AsyncMock, call, create_autospec
 
+import pytest
 from aio_pika import RobustChannel, RobustConnection
+from aio_pika.exchange import ExchangeType
 from aiocouch.database import Database, NotFoundError
 from aiocouch.document import Document
+from pytest_mock import MockFixture
 
 from metricq_manager.queue_manager import QueueManager
 
@@ -112,7 +112,7 @@ async def test_declare_sink_queue(data_connection, empty_db):
         config_db=empty_db,
     )
 
-    await manager.declare_sink_data_queue("sink-foo", queue_name=None)
+    await manager.sink_declare_data_queue("sink-foo", queue_name=None)
 
     args, kwargs = channel.declare_queue.call_args
     assert not kwargs["robust"]
@@ -132,7 +132,7 @@ async def test_declare_sink_queue_default_queue_name(data_connection, empty_db):
     )
 
     QUEUE_NAME_OVERRIDE = "sink-foo-override-data"
-    await manager.declare_sink_data_queue("sink-foo", queue_name=QUEUE_NAME_OVERRIDE)
+    await manager.sink_declare_data_queue("sink-foo", queue_name=QUEUE_NAME_OVERRIDE)
 
     args, kwargs = channel.declare_queue.call_args
     assert QUEUE_NAME_OVERRIDE in args[:1] or kwargs["name"] == QUEUE_NAME_OVERRIDE
@@ -145,6 +145,6 @@ async def test_declare_history_queue_no_config(data_connection, empty_db):
 
     manager = QueueManager(data_connection=data_connection, config_db=empty_db)
 
-    await manager.declare_history_response_queue("history-foo")
+    await manager.history_declare_response_queue("history-foo")
 
     channel.declare_queue.assert_called_once()

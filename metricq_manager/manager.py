@@ -247,7 +247,7 @@ class Manager(Agent):
         # TODO figure out why auto-assigned queues cannot be used by the client
         metrics = body.get("metrics", [])
 
-        queue = await self.queue_manager.declare_sink_data_queue(
+        queue = await self.queue_manager.sink_declare_data_queue(
             client_token=from_token,
             queue_name=body.get("dataQueue"),
             expires=body.get("expires"),
@@ -343,7 +343,7 @@ class Manager(Agent):
     @rpc_handler("transformer.subscribe")
     async def handle_transformer_subscribe(self, from_token, metrics, **body):
         logger.debug("attempting to declare queue for {}", from_token)
-        data_queue = await self.queue_manager.declare_transformer_data_queue(
+        data_queue = await self.queue_manager.transformer_declare_data_queue(
             transformer_token=from_token,
             bindinds=metrics,
         )
@@ -438,7 +438,7 @@ class Manager(Agent):
         logger.debug(
             "attempting to declare queue history response queue for {}", from_token
         )
-        history_queue = await self.queue_manager.declare_history_response_queue(
+        history_queue = await self.queue_manager.history_declare_response_queue(
             history_token=from_token
         )
         logger.debug("declared queue {} for {}", history_queue, from_token)
@@ -625,7 +625,7 @@ class Manager(Agent):
     ) -> Tuple[DataQueueName, HreqQueueName, MetricList]:
         data_bindings, history_bindings = self.parse_db_bindings(bindings=metrics)
 
-        data_queue, history_queue = await self.queue_manager.declare_db_queues(
+        data_queue, history_queue = await self.queue_manager.db_declare_queues(
             db_token=db_token,
             data_bindings=data_bindings,
             history_bindings=history_bindings,
@@ -682,7 +682,7 @@ class Manager(Agent):
                 from_token, metrics=bindings, metadata=False
             )
         else:
-            data_queue, history_queue = await self.queue_manager.declare_db_queues(
+            data_queue, history_queue = await self.queue_manager.db_declare_queues(
                 from_token
             )
 

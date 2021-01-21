@@ -228,7 +228,7 @@ class QueueManager:
 
         return ConfigParser(config=config, role=role, client_token=client_token)
 
-    async def declare_sink_data_queue(
+    async def sink_declare_data_queue(
         self,
         client_token: str,
         queue_name: Optional[str],
@@ -388,7 +388,7 @@ class QueueManager:
             queue = await channel.get_queue(queue_name)
             await queue.delete(if_unused=False, if_empty=False)
 
-    async def declare_history_response_queue(self, history_token: str) -> HreqQueueName:
+    async def history_declare_response_queue(self, history_token: str) -> HreqQueueName:
         """Declare a HistoryClient's history response queue.
 
         Historic metric data will arrive on this queue when requested by the :literal:`get_metrics` RPC.
@@ -432,7 +432,7 @@ class QueueManager:
             channel=channel,
         )
 
-    async def declare_transformer_data_queue(
+    async def transformer_declare_data_queue(
         self,
         transformer_token: str,
         bindinds: Optional[List[Metric]] = None,
@@ -464,7 +464,7 @@ class QueueManager:
 
             return data_queue.name
 
-    async def declare_db_queues(
+    async def db_declare_queues(
         self,
         db_token: str,
         data_bindings: Optional[List[Metric]] = None,
