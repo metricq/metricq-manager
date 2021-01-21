@@ -6,7 +6,7 @@ import logging
 import pytest
 from pytest_mock import MockerFixture
 
-from metricq_manager.config_parser import ConfigDict, ConfigParser, QueueType
+from metricq_manager.config_parser import ClientConfig, ConfigParser, QueueType
 
 DEFAULT_CLIENT_TOKEN = "client-test"
 
@@ -29,14 +29,14 @@ def test_config_parser_replace_role(default_config_parser: ConfigParser):
     assert copy.config == default_config_parser.config
 
 
-def x_metricq(config: ConfigDict) -> ConfigDict:
+def x_metricq(config: ClientConfig) -> ClientConfig:
     """Return a client configuration that has the "x-metricq" top-level key set"""
     return {"x-metricq": config}
 
 
 @dataclass
 class _DefaultTestParam:
-    config: ConfigDict
+    config: ClientConfig
     expected: Any
     key: str = "foo"
     default: Optional[str] = None
