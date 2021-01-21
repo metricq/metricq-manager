@@ -1,7 +1,7 @@
 from aio_pika.exchange import ExchangeType
 import pytest
 from pytest_mock import MockFixture
-from unittest.mock import call, create_autospec
+from unittest.mock import AsyncMock, call, create_autospec
 
 from aio_pika import RobustChannel, RobustConnection
 from aiocouch.database import Database, NotFoundError
@@ -49,31 +49,6 @@ async def test_close(empty_db):
     manager = QueueManager(data_connection=data_connection, config_db=empty_db)
 
     await manager.close()
-    assert manager._channel is None, "Channel was not closed properly"
-    data_connection.close.assert_called_once()
-
-
-async def test_close_open_channel(empty_db):
-    async def close():
-        pass
-
-    async def channel(self):
-        assert False, "No new channel should be opened when an open channel was given"
-
-    data_connection = create_autospec(
-        RobustConnection, spec_set=True, close=close, channel=channel
-    )
-    open_channel = create_autospec(RobustChannel, spec_set=True)
-    manager = QueueManager(
-        data_connection=data_connection, config_db=empty_db, channel=open_channel
-    )
-
-    await manager.ensure_open_channel()
-    assert manager._channel is open_channel
-
-    await manager.close()
-    open_channel.close.assert_called_once()
-    assert manager._channel is None, "Channel was not closed properly"
     data_connection.close.assert_called_once()
 
 
@@ -105,10 +80,9 @@ async def test_read_config_allow_missing(data_connection, empty_db):
 
 async def test_declare_exchanges(data_connection, empty_db):
     channel = create_autospec(RobustChannel, spec_set=True)
+    data_connection.channel = AsyncMock(return_value=channel)
 
-    manager = QueueManager(
-        data_connection=data_connection, config_db=empty_db, channel=channel
-    )
+    manager = QueueManager(data_connection=data_connection, config_db=empty_db)
 
     # Assert that exchanges are not available before they are declared
     with pytest.raises(RuntimeError):
@@ -121,50 +95,56 @@ async def test_declare_exchanges(data_connection, empty_db):
     )
 
     # Check that the exchanges have been declared with the correct parameters
-    declare_calls = [
+    for declare_call in (
         call.declare_exchange(name="data", durable=True, type=ExchangeType.TOPIC),
         call.declare_exchange(name="history", durable=True, type=ExchangeType.TOPIC),
-    ]
-    assert all(decl in channel.method_calls for decl in declare_calls)
+    ):
+        assert declare_call in channel.method_calls
 
 
 async def test_declare_sink_queue(data_connection, empty_db):
-    async def declare_queue(auto_delete, robust, *_args, **_kwargs):
-        assert not robust
-        assert auto_delete
+    channel = create_autospec(RobustChannel, spec_set=True)
+
+    data_connection.attach_mock(AsyncMock(return_value=channel), "channel")
 
     manager = QueueManager(
         data_connection=data_connection,
         config_db=empty_db,
-        channel=create_autospec(RobustChannel, declare_queue=declare_queue),
     )
 
     await manager.declare_sink_data_queue("sink-foo", queue_name=None)
 
+    args, kwargs = channel.declare_queue.call_args
+    assert not kwargs["robust"]
+    assert kwargs["auto_delete"]
+
 
 async def test_declare_sink_queue_default_queue_name(data_connection, empty_db):
-    QUEUE_NAME_OVERRIDE = "sink-foo-override-data"
-
-    async def declare_queue(queue_name, *_args, **_kwargs):
-        assert queue_name == QUEUE_NAME_OVERRIDE
+    channel = create_autospec(RobustChannel)
+    data_connection.attach_mock(
+        AsyncMock(return_value=channel),
+        "channel",
+    )
 
     manager = QueueManager(
         data_connection=data_connection,
         config_db=empty_db,
-        channel=create_autospec(RobustChannel, declare_queue=declare_queue),
     )
 
+    QUEUE_NAME_OVERRIDE = "sink-foo-override-data"
     await manager.declare_sink_data_queue("sink-foo", queue_name=QUEUE_NAME_OVERRIDE)
+
+    args, kwargs = channel.declare_queue.call_args
+    assert QUEUE_NAME_OVERRIDE in args[:1] or kwargs["name"] == QUEUE_NAME_OVERRIDE
 
 
 async def test_declare_history_queue_no_config(data_connection, empty_db):
-    async def declare_queue(*_args, **_kwargs):
-        pass
+    channel = create_autospec(RobustChannel, spec_set=True)
 
-    channel = create_autospec(RobustChannel, declare_queue=declare_queue)
+    data_connection.attach_mock(AsyncMock(return_value=channel), "channel")
 
-    manager = QueueManager(
-        data_connection=data_connection, config_db=empty_db, channel=channel
-    )
+    manager = QueueManager(data_connection=data_connection, config_db=empty_db)
 
     await manager.declare_history_response_queue("history-foo")
+
+    channel.declare_queue.assert_called_once()

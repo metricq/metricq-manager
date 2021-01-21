@@ -29,11 +29,15 @@ import asyncio
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from aio_pika import Queue, RobustChannel, Exchange, RobustConnection
-from aio_pika.channel import Channel
-from aio_pika.exceptions import ChannelClosed
-from aio_pika.exchange import ExchangeType
-from aio_pika.message import Message
+from aio_pika import (
+    Exchange,
+    ExchangeType,
+    Message,
+    Queue,
+    RobustChannel,
+    RobustConnection,
+)
+from aio_pika.exceptions import AMQPChannelError, ChannelClosed
 from aiocouch.database import Database, NotFoundError
 from metricq import get_logger
 
@@ -54,14 +58,6 @@ DataQueueName = str
 HreqQueueName = str
 
 
-class SinkUnbindFailed(RuntimeError):
-    pass
-
-
-class DataQueueNotFound(RuntimeError):
-    pass
-
-
 class QueueManager:
     """The queue manager.
 
@@ -71,9 +67,6 @@ class QueueManager:
             All queue operations are performed on the vhost to which it connects.
         config_db:
             An open connection to the CouchDB database that contains the per-client configuration.
-        channel:
-            An open channel on :code:`data_connection`.
-            If omitted, a new channel is opened on demand.
     """
 
     def __init__(
@@ -81,11 +74,9 @@ class QueueManager:
         *,
         data_connection: RobustConnection,
         config_db: Database,
-        channel: Optional[RobustChannel] = None,
     ):
         self.data_connection = data_connection
         self.config = config_db
-        self._channel = channel
 
         # The exchanges to which metric data are sent.
         # The need to be declared with :meth:`declare_exchanges` before use.
@@ -95,34 +86,32 @@ class QueueManager:
     async def close(self):
         """Shutdown this queue manager.
 
-        This closes any open channels and the data connection.
+        This closes the data connection.
         """
-        if self._channel is not None:
-            logger.debug(
-                "Closing channel on data connection {!r}", self.data_connection
-            )
-            await self._channel.close()
-            self._channel = None
-
         logger.debug("Closing data connection {!r}", self.data_connection)
         await self.data_connection.close()
 
-    async def ensure_open_channel(self):
-        """Ensure that there is an open channel to perform queue operations."""
-        logger.debug("Ensuring an open channel on {!r}", self.data_connection)
-        await self.channel()
+    @asynccontextmanager
+    async def temporary_channel(self, reuse: Optional[RobustChannel] = None):
+        if reuse is not None:
+            logger.debug("Reusing channel {!r} as temporary channel", reuse)
+            yield reuse
+            return
 
-    async def channel(self) -> RobustChannel:
-        """Return a channel on the data connection, opening a new one if necessary."""
-        if self._channel is None:
-            logger.debug(
-                "Opening new channel on data connection {!r} for QueueManager",
-                self.data_connection,
-            )
-            self._channel = await self.data_connection.channel()
+        channel: RobustChannel = await self.data_connection.channel()
+        logger.debug("Opened temporary channel {!r}", channel)
 
-        assert self._channel is not None
-        return self._channel
+        try:
+            yield channel
+        except ChannelClosed:
+            logger.warning("Temporary channel {!r} closed unexpectedly!", channel)
+            raise
+        finally:
+            logger.debug("Closing temporary channel {!r}", channel)
+            try:
+                await channel.close()
+            except AMQPChannelError as e:
+                logger.warning("Failed to close temporary channel {!r}: {}", channel, e)
 
     async def declare_queue(
         self,
@@ -130,23 +119,25 @@ class QueueManager:
         arguments: Dict[str, Any],
         auto_delete: bool = False,
         durable: bool = False,
+        channel: Optional[RobustChannel] = None,
     ) -> Queue:
         """Declare a new queue."""
-        channel = await self.channel()
-        return await channel.declare_queue(
-            name=name,
-            arguments=arguments,
-            auto_delete=auto_delete,
-            durable=durable,
-            robust=False,
-        )
+
+        async with self.temporary_channel(reuse=channel) as channel:
+            return await channel.declare_queue(
+                name=name,
+                arguments=arguments,
+                auto_delete=auto_delete,
+                durable=durable,
+                robust=False,
+            )
 
     async def _declare_exchange(self, name: str) -> Exchange:
         logger.info("Declaring exchange {!r}", name)
-        channel = await self.channel()
-        return await channel.declare_exchange(
-            name=name, type=ExchangeType.TOPIC, durable=True
-        )
+        async with self.temporary_channel() as channel:
+            return await channel.declare_exchange(
+                name=name, type=ExchangeType.TOPIC, durable=True
+            )
 
     async def declare_exchanges(
         self,
@@ -237,33 +228,6 @@ class QueueManager:
 
         return ConfigParser(config=config, role=role, client_token=client_token)
 
-    @asynccontextmanager
-    async def fetch_data_queue(self, queue_name: str):
-        """Opens a new channel to reliably fetch an existing data queue.
-
-        If the queue does not exist, this raises :class:`.DataQueueNotFound`.
-        """
-
-        # Open a new (temporary) channel on the data connection.
-        # If fetching the queue fails, the channel will be closed by the remote,
-        # and `get_queue` raises `ChannelClosed`.
-        channel: Channel = await self.data_connection.channel()
-
-        try:
-            queue = await channel.get_queue(queue_name)
-        except ChannelClosed as e:
-            raise DataQueueNotFound(f"Failed to fetch data queue {queue_name!r}") from e
-
-        try:
-            yield queue
-        finally:
-            # Close the temporary channel in a background task
-            async def close():
-                await channel.close()
-                logger.debug("Closed temporary channel {!r}", channel)
-
-            asyncio.create_task(close())
-
     async def declare_sink_data_queue(
         self,
         client_token: str,
@@ -307,29 +271,45 @@ class QueueManager:
                 expires,
             )
 
-        channel = await self.channel()
-        data_queue = await channel.declare_queue(
-            queue_name,
-            auto_delete=True,
-            arguments=arguments,
-        )
-
-        if bindinds:
-            await self._bind_metrics(
-                metrics=bindinds,
-                queue=data_queue,
-                exchange=self.data_exchange,
+        async with self.temporary_channel() as channel:
+            data_queue = await self.declare_queue(
+                queue_name,
+                auto_delete=True,
+                durable=False,
+                arguments=arguments,
+                channel=channel,
             )
 
-        return data_queue.name
+            if bindinds:
+                await self._bind_metrics(
+                    metrics=bindinds,
+                    queue=data_queue,
+                    exchange=self.data_exchange,
+                    channel=channel,
+                )
+
+            return data_queue.name
 
     async def _bind_metrics(
         self,
         metrics: List[str],
         queue: Queue,
         exchange: Exchange,
+        *,
+        channel: RobustChannel,
     ):
-        """Bind a list of metrics from the given exchange to a queue."""
+        """Bind a list of metrics from the given exchange to a queue.
+
+        Warning:
+            The ``queue`` must have been declared on the provided ``channel``!
+
+        """
+        assert queue.channel is channel.channel, (
+            "Metrics must be bound to a queue using the *SAME* channel the queue was declared with. "
+            "This is a BUG! "
+            f"(queue.channel={queue.channel!r}, channel.channel={channel.channel!r})"
+        )
+
         logger.info(
             "Binding metrics to queue {!r} on exchange {!r}",
             queue,
@@ -366,7 +346,8 @@ class QueueManager:
                 If :code:`True`, send an explicit :literal:`end`-message to the Sink after unsubscription.
         """
         try:
-            async with self.fetch_data_queue(queue_name) as queue:
+            async with self.temporary_channel() as channel:
+                queue = await channel.get_queue(queue_name)
                 logger.debug(
                     "Unbinding {} metric(s) from data queue {!r} for client {!r}",
                     len(metrics),
@@ -382,32 +363,29 @@ class QueueManager:
                 )
 
                 if publish_end_message:
-                    await self.publish_end_message(queue_name=queue_name)
+                    await self.publish_end_message(
+                        queue_name=queue_name, channel=channel
+                    )
 
-        except DataQueueNotFound as e:
-            err = SinkUnbindFailed(f"Data queue {queue_name!r} does not exist")
+        except Exception as e:
             logger.error(
-                "Failed to unbind {} metric(s) for client {!r}: {} (cause: {})",
+                "Failed to unbind {} metric(s) from queue {!r} of client {!r}: {}",
                 len(metrics),
                 queue_name,
                 client_token,
-                err,
                 e,
             )
-            raise err from e
-        except ChannelClosed as e:
-            raise SinkUnbindFailed(
-                f"Channel closed while unbinding metrics from queue {queue_name!r} of client {client_token!r}"
-            ) from e
+            raise e
 
-    async def publish_end_message(self, queue_name: str):
-        await self.channel.default_exchange.publish(
+    async def publish_end_message(self, queue_name: str, channel: RobustChannel):
+        await channel.default_exchange.publish(
             Message(body=b"", type="end"), routing_key=queue_name
         )
 
     async def sink_delete_data_queue(self, queue_name: str):
         """Delete a Sink's data queue."""
-        async with self.fetch_data_queue(queue_name) as queue:
+        async with self.temporary_channel() as channel:
+            queue = await channel.get_queue(queue_name)
             await queue.delete(if_unused=False, if_empty=False)
 
     async def declare_history_response_queue(self, history_token: str) -> HreqQueueName:
@@ -431,7 +409,9 @@ class QueueManager:
 
         return hreq_queue.name
 
-    async def declare_durable_queue(self, config: ConfigParser) -> DataQueue:
+    async def declare_durable_queue(
+        self, config: ConfigParser, channel: Optional[RobustChannel] = None
+    ) -> DataQueue:
         """Declare a queue with arguments parsed from the given configuration.
 
         The queue will be :literal:`durable`, i.e. survive broker restarts.
@@ -449,6 +429,7 @@ class QueueManager:
             queue_name,
             arguments=arguments,
             durable=True,
+            channel=channel,
         )
 
     async def declare_transformer_data_queue(
@@ -464,17 +445,24 @@ class QueueManager:
             bindinds:
                 An optional list of metrics to bind on this queue.
         """
-        data_queue = await self.declare_durable_queue(
-            config=await self.read_config(client_token=transformer_token, role="data")
-        )
-
-        if bindinds:
-            # TODO Also unbind other metrics that are no longer relevant
-            await self._bind_metrics(
-                metrics=bindinds, queue=data_queue, exchange=self.data_exchange
+        async with self.temporary_channel() as channel:
+            data_queue = await self.declare_durable_queue(
+                config=await self.read_config(
+                    client_token=transformer_token, role="data"
+                ),
+                channel=channel,
             )
 
-        return data_queue.name
+            if bindinds:
+                # TODO Also unbind other metrics that are no longer relevant
+                await self._bind_metrics(
+                    metrics=bindinds,
+                    queue=data_queue,
+                    exchange=self.data_exchange,
+                    channel=channel,
+                )
+
+            return data_queue.name
 
     async def declare_db_queues(
         self,
@@ -499,31 +487,46 @@ class QueueManager:
         data_config = await self.read_config(client_token=db_token, role="data")
         hreq_config = data_config.replace(role="hreq")
 
-        data_queue = await self.declare_durable_queue(config=data_config)
-        hreq_queue = await self.declare_durable_queue(config=hreq_config)
-
-        bind_tasks = []
-        if data_bindings is not None:
-            logger.info("Binding metrics to data queue for database {!r}", db_token)
-            bind_tasks.append(
-                self._bind_metrics(
-                    metrics=data_bindings,
-                    queue=data_queue,
-                    exchange=self.data_exchange,
-                )
+        async with self.temporary_channel() as channel:
+            data_queue = await self.declare_durable_queue(
+                config=data_config, channel=channel
+            )
+            hreq_queue = await self.declare_durable_queue(
+                config=hreq_config, channel=channel
             )
 
-        if history_bindings is not None:
-            logger.info("Binding metrics to history queue for database {!r}", db_token)
-            bind_tasks.append(
-                self._bind_metrics(
-                    metrics=history_bindings,
-                    queue=hreq_queue,
-                    exchange=self.history_exchange,
+            bind_tasks = []
+            if data_bindings is not None:
+                logger.info(
+                    "Binding {} metric(s) to data queue for database {!r}",
+                    len(data_bindings),
+                    db_token,
                 )
-            )
+                bind_tasks.append(
+                    self._bind_metrics(
+                        metrics=data_bindings,
+                        queue=data_queue,
+                        exchange=self.data_exchange,
+                        channel=channel,
+                    )
+                )
 
-        if bind_tasks:
-            await asyncio.gather(*bind_tasks)
+            if history_bindings is not None:
+                logger.info(
+                    "Binding {} metric(s) to history queue for database {!r}",
+                    len(history_bindings),
+                    db_token,
+                )
+                bind_tasks.append(
+                    self._bind_metrics(
+                        metrics=history_bindings,
+                        queue=hreq_queue,
+                        exchange=self.history_exchange,
+                        channel=channel,
+                    )
+                )
 
-        return (data_queue.name, hreq_queue.name)
+            if bind_tasks:
+                await asyncio.gather(*bind_tasks)
+
+            return (data_queue.name, hreq_queue.name)

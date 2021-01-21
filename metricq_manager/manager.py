@@ -203,10 +203,6 @@ class Manager(Agent):
             config_db=self.couchdb_db_config,
         )
 
-        # Make sure we can open a channel on the data connection.
-        # This channel will be reused by the QueueManager for as long as possible.
-        await self.queue_manager.ensure_open_channel()
-
         # Declare the data and history exchanges
         await self.queue_manager.declare_exchanges()
 
