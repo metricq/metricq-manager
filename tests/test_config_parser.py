@@ -134,19 +134,35 @@ OVERRIDE_CLIENT_TOKEN = "client-test-foo-bar-override-test"
 
 
 @pytest.mark.parametrize(
-    ("default", "unique", "queue_name"),
+    ("default", "unique", "queue_name", "queue_type"),
     [
-        (OVERRIDE_CLIENT_TOKEN, True, OVERRIDE_CLIENT_TOKEN),
-        (OVERRIDE_CLIENT_TOKEN, False, OVERRIDE_CLIENT_TOKEN),
-        (None, False, f"{DEFAULT_CLIENT_TOKEN}-test"),
-        (None, True, f"{DEFAULT_CLIENT_TOKEN}-{FIXED_UUID.hex}-test"),
+        (OVERRIDE_CLIENT_TOKEN, True, OVERRIDE_CLIENT_TOKEN, QueueType.default()),
+        (OVERRIDE_CLIENT_TOKEN, False, OVERRIDE_CLIENT_TOKEN, QueueType.default()),
+        (None, False, f"{DEFAULT_CLIENT_TOKEN}-quorum-test", QueueType.QUORUM),
+        (
+            None,
+            True,
+            f"{DEFAULT_CLIENT_TOKEN}-{FIXED_UUID.hex}-test",
+            QueueType.default(),
+        ),
+        (None, False, f"{DEFAULT_CLIENT_TOKEN}-quorum-test", QueueType.QUORUM),
+        (
+            None,
+            True,
+            f"{DEFAULT_CLIENT_TOKEN}-{FIXED_UUID.hex}-quorum-test",
+            QueueType.QUORUM,
+        ),
     ],
 )
-def test_queue_name(default, unique, queue_name, mocker: MockerFixture):
+def test_queue_name(
+    default, unique, queue_name, queue_type: QueueType, mocker: MockerFixture
+):
     mocker.patch("metricq_manager.config_parser.uuid4", lambda: FIXED_UUID)
 
     config_parser = ConfigParser(
-        config={}, role="test", client_token=DEFAULT_CLIENT_TOKEN
+        config=x_metricq({"test-queue-type": queue_type.to_string()}),
+        role="test",
+        client_token=DEFAULT_CLIENT_TOKEN,
     )
 
     assert config_parser.queue_name(unique=unique, default=default) == queue_name

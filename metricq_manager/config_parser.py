@@ -29,6 +29,14 @@ class QueueType(Enum):
         else:
             raise ValueError(f"Invalid queue type {queue_type!r}")
 
+    def to_string(self) -> str:
+        if self is QueueType.CLASSIC:
+            return "classic"
+        elif self is QueueType.QUORUM:
+            return "quorum"
+        else:
+            assert False, f"Invalid QueueType {self!r}"
+
 
 class ConfigParser:
     def __init__(
@@ -136,7 +144,31 @@ class ConfigParser:
                     f'{default!r} does not match "{self.client_token}[-*]-{self.role}"'
                 )
                 return default
-        elif unique:
-            return f"{self.client_token}-{uuid4().hex}-{self.role}"
         else:
-            return f"{self.client_token}-{self.role}"
+            return "-".join(self._queue_name_parts(unique=unique))
+
+    def _queue_name_parts(self, unique: bool):
+        yield self.client_token
+        if unique:
+            yield uuid4().hex
+
+        # When changing the queue type of a client queue, its next declaration is
+        # going to fail with error code 406 (Precondition failed), since it does
+        # not match the arguments of the existing queue.
+        #
+        # We include the queue type in the queue name to sidestep the problem.
+        # Changing the queue type then results in a new queue (with a predictable
+        # name) being declared and no conflicts arise.  A client re-registering
+        # itself with a changed queue type then gets assigned the newly declared
+        # queue.  Of course, the old queue still exists and needs to be deleted
+        # manually.
+        #
+        # For backwards compatibility, we only include the queue type if it is
+        # different from the default queue type, which in the past was only
+        # available queue type.  This way, all clients that do not declare a
+        # special queue type keep the old queue names.
+        queue_type = self.queue_type()
+        if queue_type != QueueType.default():
+            yield self.queue_type().to_string()
+
+        yield self.role
