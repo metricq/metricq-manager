@@ -40,9 +40,14 @@ Metric = str
 MetricList = Union[List[Metric], Dict[Metric, Dict[str, Any]]]
 
 
-class MetricInputAlias(TypedDict):
-    input: Optional[Metric]
+class MetricInputAlias(TypedDict, total=False):
+    """A database can choose to subscribe to a metric on the network by an input alias."""
+
+    input: Metric
+    """The input alias, which might be different from the name history clients request.
+    """
     name: Metric
+    """Name of a metric under which to serve it to history clients."""
 
 
 DbMetricBindings = List[Union[Metric, MetricInputAlias]]
@@ -606,14 +611,18 @@ class Manager(Agent):
         history_bindings: List[Metric] = []
 
         for metric in bindings:
-            data, hist = (
-                (metric, metric)
-                if isinstance(metric, str)
-                else (metric.get("input") or metric["name"], metric["name"])
-            )
-
-            data_bindings.append(data)
-            history_bindings.append(hist)
+            # Each item in bindings is either a string or a dict.
+            if isinstance(metric, str):
+                # If it is a string, it is used for both history requests and new data
+                data_bindings.append(metric)
+                history_bindings.append(metric)
+            else:
+                # If it is a dictionay, the key "input" specifies an optional input alias.
+                # If it does not exists, assume there is no alias and fall back to "name".
+                metric_name = metric["name"]
+                input_name = metric.get("input", metric_name)
+                data_bindings.append(input_name)
+                history_bindings.append(metric_name)
 
         return data_bindings, history_bindings
 
