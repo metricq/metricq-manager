@@ -137,6 +137,22 @@ def test_queue_type_to_string_exhaustive(queue_type):
     assert isinstance(queue_type.to_string(), str)
 
 
+@pytest.mark.parametrize(
+    "queue_type", [queue_type for queue_type in QueueType.__members__.values()]
+)
+def test_queue_type_arguments_iterable(queue_type: QueueType):
+    """Assert that for every queue type, arguments() returns an iterable of
+    `x-arguments <https://www.rabbitmq.com/queues.html#optional-arguments>`_
+    """
+    config_parser = ConfigParser(
+        config=x_metricq({"test-queue-type": queue_type.to_string()}),
+        role="test",
+        client_token=DEFAULT_CLIENT_TOKEN,
+    )
+    for name, _ in config_parser.arguments():
+        assert name.startswith("x-")
+
+
 FIXED_UUID = uuid4()
 OVERRIDE_CLIENT_TOKEN = "client-test-foo-bar-override-test"
 
