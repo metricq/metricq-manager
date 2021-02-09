@@ -294,7 +294,7 @@ class ConfigParser:
         self,
         *,
         unique: bool = True,
-        default: Optional[str] = None,
+        validate: Optional[str] = None,
     ) -> str:
         """Return a suitable name for the queue under construction.
 
@@ -305,22 +305,25 @@ class ConfigParser:
             unique:
                 If set, the queue name will contain a random string of letters,
                 unique for each call of this method.
-            default:
-                If set, the given name will be checked against the format mentioned above.
-                If it matches, it is returned as-is, otherwise a :exc:`ValueError` is raised.
+            validate:
+                If set, the given value will be checked against the format mentioned above.
+                If it matches, it is returned as-is, otherwise a warning is logged.
+
+                Note:
+                    In the future, this might be changed to raise a :exc:`ValueError` instead!
 
         Returns:
             The formatted queue name.
         """
-        if default:
-            if default.startswith(self.client_token) and default.endswith(self.role):
-                return default
+        if validate:
+            if validate.startswith(self.client_token) and validate.endswith(self.role):
+                return validate
             else:
                 logger.warning(
                     f"Invalid queue name for client {self.client_token!r}: "
-                    f'{default!r} does not match "{self.client_token}[-*]-{self.role}"'
+                    f'{validate!r} does not match "{self.client_token}[-*]-{self.role}"'
                 )
-                return default
+                return validate
         else:
             return "-".join(self._queue_name_parts(unique=unique))
 

@@ -257,7 +257,7 @@ class QueueManager:
 
         config = await self.read_config(client_token, role="data", allow_missing=True)
 
-        queue_name = config.queue_name(unique=True, default=queue_name)
+        queue_name = config.queue_name(unique=True, validate=queue_name)
         arguments = dict(config.classic_arguments())
 
         if isinstance(expires, (int, float)) and expires > 0:

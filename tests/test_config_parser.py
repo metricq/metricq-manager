@@ -134,7 +134,7 @@ OVERRIDE_CLIENT_TOKEN = "client-test-foo-bar-override-test"
 
 
 @pytest.mark.parametrize(
-    ("default", "unique", "queue_name", "queue_type"),
+    ("validate", "unique", "queue_name", "queue_type"),
     [
         (OVERRIDE_CLIENT_TOKEN, True, OVERRIDE_CLIENT_TOKEN, QueueType.default()),
         (OVERRIDE_CLIENT_TOKEN, False, OVERRIDE_CLIENT_TOKEN, QueueType.default()),
@@ -155,7 +155,7 @@ OVERRIDE_CLIENT_TOKEN = "client-test-foo-bar-override-test"
     ],
 )
 def test_queue_name(
-    default, unique, queue_name, queue_type: QueueType, mocker: MockerFixture
+    validate, unique, queue_name, queue_type: QueueType, mocker: MockerFixture
 ):
     mocker.patch("metricq_manager.config_parser.uuid4", lambda: FIXED_UUID)
 
@@ -165,7 +165,7 @@ def test_queue_name(
         client_token=DEFAULT_CLIENT_TOKEN,
     )
 
-    assert config_parser.queue_name(unique=unique, default=default) == queue_name
+    assert config_parser.queue_name(unique=unique, validate=validate) == queue_name
 
 
 def test_queue_name_unique(default_config_parser):
@@ -183,7 +183,7 @@ def test_queue_name_fixed(default_config_parser):
 
 
 @pytest.mark.parametrize(
-    "invalid_default",
+    "invalid_queue_name",
     [
         # Default does not start with the client token
         "XXX-wrong-prefix-test",
@@ -191,9 +191,11 @@ def test_queue_name_fixed(default_config_parser):
         "client-wrong-suffix-XXX",
     ],
 )
-def test_queue_name_default_invalid(default_config_parser, invalid_default, caplog):
+def test_queue_name_default_invalid(
+    default_config_parser: ConfigParser, invalid_queue_name, caplog
+):
     with caplog.at_level(logging.WARNING, logger="metricq_manager.config_parser"):
-        default_config_parser.queue_name(default=invalid_default)
+        default_config_parser.queue_name(validate=invalid_queue_name)
         assert "Invalid queue name" in caplog.text
 
 
