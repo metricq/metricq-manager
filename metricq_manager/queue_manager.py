@@ -50,8 +50,9 @@ Seconds = Union[int, float]
 HreqQueue = Queue
 DataQueue = Queue
 
-DataExchange = Exchange
-HistoryExchange = Exchange
+ExchangeName = str
+DataExchange = ExchangeName
+HistoryExchange = ExchangeName
 
 Metric = str
 DataQueueName = str
@@ -92,12 +93,42 @@ class QueueManager:
         await self.data_connection.close()
 
     @asynccontextmanager
-    async def temporary_channel(self, reuse: Optional[RobustChannel] = None):
-        if reuse is not None:
-            logger.debug("Reusing channel {!r} as temporary channel", reuse)
-            yield reuse
-            return
+    async def temporary_channel(self):
+        """Open a temporary channel on the data connection.
 
+        Warning:
+            This is an async context manager.
+            The channel it yields will be closed automatically at the end of the :code:`async with ...`-block.
+            No resource (queue, exchange, ...) that was declared within this block should ever leave it.
+            Always make sure to only return references to these resources that do not internally reference the channel.
+            Most operations work with such references,
+            if that's not possible execute them within the :literal:`async with`-block.
+            For example, :code:`aio_pika.Queue.bind()` takes an exchange by name, so :ref:`_declare_exchange`
+            only returns a name, but is an instance-method of `aio_pika.Queue`,
+            so has to be called within the context of the channel it was declared on.
+
+            Bad:
+                - leak a aio_pika.Queue or aio_pika.Exchange object
+
+            Good:
+                Return a queue name or an exchange name
+
+                .. code-block: python
+
+                    with self.temporary_channel() as channel:
+                        exchange = self._declare_exchange(...)
+                        name_of_exchange = exchange.name
+
+                    # Later, somewhere else...
+                    ...
+
+                    with self.temporary_channel() as channel:
+                        queue = self.declare_queue(...)
+                        queue.bind(..., exchange=name_of_exchange)
+                        return queue.name
+
+
+        """
         channel: RobustChannel = await self.data_connection.channel()
         logger.debug("Opened temporary channel {!r}", channel)
 
@@ -116,28 +147,29 @@ class QueueManager:
     async def declare_queue(
         self,
         name: str,
+        channel: RobustChannel,
         arguments: Dict[str, Any],
         auto_delete: bool = False,
         durable: bool = False,
-        channel: Optional[RobustChannel] = None,
     ) -> Queue:
         """Declare a new queue."""
 
-        async with self.temporary_channel(reuse=channel) as channel:
-            return await channel.declare_queue(
-                name=name,
-                arguments=arguments,
-                auto_delete=auto_delete,
-                durable=durable,
-                robust=False,
-            )
+        return await channel.declare_queue(
+            name=name,
+            arguments=arguments,
+            auto_delete=auto_delete,
+            durable=durable,
+            robust=False,
+        )
 
-    async def _declare_exchange(self, name: str) -> Exchange:
+    async def _declare_exchange(
+        self, name: str, channel: RobustChannel
+    ) -> ExchangeName:
         logger.info("Declaring exchange {!r}", name)
-        async with self.temporary_channel() as channel:
-            return await channel.declare_exchange(
-                name=name, type=ExchangeType.TOPIC, durable=True
-            )
+        exchange = await channel.declare_exchange(
+            name=name, type=ExchangeType.TOPIC, durable=True
+        )
+        return exchange.name
 
     async def declare_exchanges(
         self,
@@ -154,13 +186,19 @@ class QueueManager:
             data_exchange_name,
             history_exchange_name,
         )
-        if self._data_exchange is None:
-            self._data_exchange = await self._declare_exchange(data_exchange_name)
 
-        if self._history_exchange is None:
-            self._history_exchange = await self._declare_exchange(history_exchange_name)
+        async with self.temporary_channel() as channel:
+            if self._data_exchange is None:
+                self._data_exchange = await self._declare_exchange(
+                    data_exchange_name, channel=channel
+                )
 
-        return (self._data_exchange, self._history_exchange)
+            if self._history_exchange is None:
+                self._history_exchange = await self._declare_exchange(
+                    history_exchange_name, channel=channel
+                )
+
+            return (self._data_exchange, self._history_exchange)
 
     @property
     def data_exchange(self) -> DataExchange:
@@ -294,7 +332,7 @@ class QueueManager:
         self,
         metrics: List[str],
         queue: Queue,
-        exchange: Exchange,
+        exchange: ExchangeName,
         *,
         channel: RobustChannel,
     ):
@@ -310,11 +348,7 @@ class QueueManager:
             f"(queue.channel={queue.channel!r}, channel.channel={channel.channel!r})"
         )
 
-        logger.info(
-            "Binding metrics to queue {!r} on exchange {!r}",
-            queue,
-            exchange.name,
-        )
+        logger.info("Binding metrics to queue {!r} on exchange {!r}", queue, exchange)
         bind_results = await asyncio.gather(
             *(queue.bind(exchange=exchange, routing_key=metric) for metric in metrics)
         )
@@ -401,16 +435,18 @@ class QueueManager:
         queue_name = config.queue_name(unique=False)
         arguments = dict(config.classic_arguments())
 
-        hreq_queue = await self.declare_queue(
-            queue_name,
-            arguments=arguments,
-            auto_delete=True,
-        )
+        async with self.temporary_channel() as channel:
+            hreq_queue = await self.declare_queue(
+                queue_name,
+                channel=channel,
+                arguments=arguments,
+                auto_delete=True,
+            )
 
-        return hreq_queue.name
+            return hreq_queue.name
 
     async def declare_durable_queue(
-        self, config: ConfigParser, channel: Optional[RobustChannel] = None
+        self, config: ConfigParser, channel: RobustChannel
     ) -> DataQueue:
         """Declare a queue with arguments parsed from the given configuration.
 
