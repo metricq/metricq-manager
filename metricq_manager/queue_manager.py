@@ -524,45 +524,44 @@ class QueueManager:
         hreq_config = data_config.replace(role="hreq")
 
         async with self.temporary_channel() as channel:
-            data_queue = await self.declare_durable_queue(
-                config=data_config, channel=channel
-            )
-            hreq_queue = await self.declare_durable_queue(
-                config=hreq_config, channel=channel
-            )
 
-            bind_tasks = []
-            if data_bindings is not None:
-                logger.info(
-                    "Binding {} metric(s) to data queue for database {!r}",
-                    len(data_bindings),
-                    db_token,
-                )
-                bind_tasks.append(
-                    self._bind_metrics(
-                        metrics=data_bindings,
+            async def declare_queue_and_bind(
+                display_name: str,
+                config: ConfigParser,
+                bindinds: Optional[List[Metric]],
+                channel: RobustChannel,
+            ):
+                logger.info("Declaring {} for database {!r}", display_name, db_token)
+                queue = await self.declare_durable_queue(config=config, channel=channel)
+
+                if bindinds is not None:
+                    logger.info(
+                        "Binding {} metric(s) to {} for database {!r}",
+                        len(bindinds),
+                        display_name,
+                        db_token,
+                    )
+                    await self._bind_metrics(
+                        metrics=bindinds,
                         queue=data_queue,
                         exchange=self.data_exchange,
                         channel=channel,
                     )
-                )
+                return queue
 
-            if history_bindings is not None:
-                logger.info(
-                    "Binding {} metric(s) to history queue for database {!r}",
-                    len(history_bindings),
-                    db_token,
-                )
-                bind_tasks.append(
-                    self._bind_metrics(
-                        metrics=history_bindings,
-                        queue=hreq_queue,
-                        exchange=self.history_exchange,
-                        channel=channel,
-                    )
-                )
-
-            if bind_tasks:
-                await asyncio.gather(*bind_tasks)
+            data_queue, hreq_queue = asyncio.gather(
+                declare_queue_and_bind(
+                    display_name="data queue",
+                    config=data_config,
+                    bindinds=data_bindings,
+                    channel=channel,
+                ),
+                declare_queue_and_bind(
+                    display_name="history request queue",
+                    config=hreq_config,
+                    bindinds=history_bindings,
+                    channel=channel,
+                ),
+            )
 
             return (data_queue.name, hreq_queue.name)
