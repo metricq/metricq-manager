@@ -1,7 +1,7 @@
+import logging
 from dataclasses import dataclass
 from typing import Any, List, Optional
 from uuid import UUID, uuid4
-import logging
 
 import pytest
 from pytest_mock import MockerFixture
@@ -127,6 +127,14 @@ def test_parse_invalid_queue_type(config_value):
     )
     with pytest.raises(ValueError):
         config_parser.queue_type()
+
+
+@pytest.mark.parametrize(
+    "queue_type", [queue_type for queue_type in QueueType.__members__.values()]
+)
+def test_queue_type_to_string_exhaustive(queue_type):
+    """Assert that every queue type is covered by `to_string`."""
+    assert isinstance(queue_type.to_string(), str)
 
 
 FIXED_UUID = uuid4()
