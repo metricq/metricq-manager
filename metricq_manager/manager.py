@@ -45,7 +45,7 @@ class MetricInputAlias(TypedDict):
     name: Metric
 
 
-DbMetricbindings = List[Union[Metric, MetricInputAlias]]
+DbMetricBindings = List[Union[Metric, MetricInputAlias]]
 
 
 class LegacyMetricConfig(TypedDict):
@@ -600,7 +600,7 @@ class Manager(Agent):
 
     @staticmethod
     def parse_db_bindings(
-        bindings: DbMetricbindings,
+        bindings: DbMetricBindings,
     ) -> Tuple[List[Metric], List[Metric]]:
         data_bindings: List[Metric] = []
         history_bindings: List[Metric] = []
@@ -620,7 +620,7 @@ class Manager(Agent):
     async def db_subscribe(
         self,
         db_token: str,
-        metrics: DbMetricbindings,
+        metrics: DbMetricBindings,
         metadata: bool,
     ) -> Tuple[DataQueueName, HreqQueueName, MetricList]:
         data_bindings, history_bindings = self.parse_db_bindings(bindings=metrics)
@@ -644,7 +644,7 @@ class Manager(Agent):
     @staticmethod
     def db_parse_legacy_bindings(
         metric_configs: Dict[Metric, LegacyMetricConfig]
-    ) -> DbMetricbindings:
+    ) -> DbMetricBindings:
         """Parse a list of metric bindings from the `metric_configs` argument of a db.register call"""
         # TODO once all deployed databases support an explicit subscribe, this part can be removed
         # this emulates the RPC format of db.subscribe

@@ -79,7 +79,7 @@ class QueueManager:
         self.config = config_db
 
         # The exchanges to which metric data are sent.
-        # The need to be declared with :meth:`declare_exchanges` before use.
+        # They need to be declared with :meth:`declare_exchanges` before use.
         self._data_exchange: Optional[DataExchange] = None
         self._history_exchange: Optional[HistoryExchange] = None
 
@@ -147,7 +147,7 @@ class QueueManager:
         """Declare the data and history exchanges.
 
         Note:
-            This needs to be called before any operation that binds metrics is called.
+            This needs to be called before any operation that binds metrics, is called.
         """
         logger.info(
             "Declaring data ({!r}) and history ({!r}) exchanges",
@@ -391,7 +391,7 @@ class QueueManager:
     async def history_declare_response_queue(self, history_token: str) -> HreqQueueName:
         """Declare a HistoryClient's history response queue.
 
-        Historic metric data will arrive on this queue when requested by the :literal:`get_metrics` RPC.
+        Historic metric metadata will arrive on this queue when requested by the :literal:`get_metrics` RPC.
 
         Args:
             history_token:

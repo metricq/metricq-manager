@@ -22,7 +22,7 @@ client configuration (as returned by the `config` RPC), but under the special ke
         "x-metricq": { "data-queue-type": "quorum" }
     }
 
-A :class:`ConfigParser` allows to parse such a client configuration and gives
+The :class:`ConfigParser` allows to parse such a client configuration and gives
 structured access to the relevant queue-specific configuration keys.
 In order to create a new :class:`ConfigParser`:
 Since a :class:`ConfigParser` is to be used when declaring a specific queue for
@@ -39,16 +39,15 @@ For example, the "queue type" (as given by the AMQP queue argument
 :literal:`"x-queue-type"`) is retrieved from the key
 :literal:`x-metricq.{role}-queue-type`.
 
-This makes it possible the make only the data queue of a database a "quorum"
-queue, leaving the history request queue as a "classic" queue by setting
+This makes it possible to only set the data queue of a DB client as a "quorum"
+queue, leaving the history request queue as a "classic" queue.
+For this, the client configuration would look like the following:
 
 .. code-block:: json
 
     {
         "x-metricq": { "data-queue-type": "quorum" }
     }
-
-in the client configuration.
 
 Some configuration keys are interdependent.
 Most notably, :literal:`x-metricq.{role}-message-ttl` is ignored if the queue
@@ -82,7 +81,7 @@ If you intended on adding more keys to be parsed, please consider the following:
         1000 before returning it, since in the client configuration it is
         stored as a number of seconds, but the queue argument
         :literal:`x-message-ttl` expects a number of milliseconds.
-        If the value is either not a number or a or it is a negative number,
+        If the value is either *not a number* or it *is negative*,
         it will be ignored and :code:`None` is returned.
     * Make sure the queue argument is compatible with the intended queue type.
         Some arguments cannot be set for all queue types.
@@ -341,8 +340,8 @@ class ConfigParser:
         # queue.  Of course, the old queue still exists and needs to be deleted
         # manually.
         #
-        # For backwards compatibility, we only include the queue type if it is
-        # different from the default queue type, which in the past was only
+        # For backward compatibility, we only include the queue type if it is
+        # different from the default queue type. In the past, this was the only
         # available queue type.  This way, all clients that do not declare a
         # special queue type keep the old queue names.
         queue_type = self.queue_type()
