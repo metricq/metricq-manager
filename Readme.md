@@ -7,6 +7,11 @@ cd configurations
 ../manager.py
 ```
 
+## Database queue maintainance and migration
+
+`./tools/db-predeclare.py` contains a script to declare queues of a database
+after their configuration changed without needing to restart the database.
+
 ## Deployment with Docker
 
 ### Prerequisites
