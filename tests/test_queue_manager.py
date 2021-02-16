@@ -148,3 +148,17 @@ async def test_declare_history_queue_no_config(data_connection, empty_db):
     await manager.history_declare_response_queue("history-foo")
 
     channel.declare_queue.assert_called_once()
+
+
+async def test_declare_transformer_queue_no_config(data_connection, empty_db):
+    channel = create_autospec(RobustChannel, spec_set=True)
+
+    data_connection.attach_mock(AsyncMock(return_value=channel), "channel")
+
+    manager = QueueManager(
+        data_connection=data_connection, config_db=mock_db({"transformer-foo": {}})
+    )
+
+    await manager.transformer_declare_data_queue("transformer-foo")
+
+    assert channel.declare_queue.await_args.kwargs["durable"]
