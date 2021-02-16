@@ -325,7 +325,7 @@ class Manager(Agent):
     async def handle_source_register(self, from_token, **body):
         response = {
             "dataServerAddress": self.data_server_address,
-            "dataExchange": self.queue_manager.data_exchange.name,
+            "dataExchange": self.queue_manager.data_exchange,
             "config": await self.read_config(from_token),
         }
         return response
@@ -451,7 +451,7 @@ class Manager(Agent):
         response = {
             "historyServerAddress": self.data_server_address,
             "dataServerAddress": self.data_server_address,
-            "historyExchange": self.queue_manager.history_exchange.name,
+            "historyExchange": self.queue_manager.history_exchange,
             "historyQueue": history_queue,
             "config": config,
         }
