@@ -543,13 +543,13 @@ class QueueManager:
                     )
                     await self._bind_metrics(
                         metrics=bindinds,
-                        queue=data_queue,
+                        queue=queue,
                         exchange=self.data_exchange,
                         channel=channel,
                     )
                 return queue
 
-            data_queue, hreq_queue = asyncio.gather(
+            data_queue, hreq_queue = await asyncio.gather(
                 declare_queue_and_bind(
                     display_name="data queue",
                     config=data_config,
