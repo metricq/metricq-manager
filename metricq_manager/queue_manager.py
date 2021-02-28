@@ -530,6 +530,7 @@ class QueueManager:
                 config: ConfigParser,
                 bindinds: Optional[List[Metric]],
                 channel: RobustChannel,
+                exchange: ExchangeName,
             ):
                 logger.info("Declaring {} for database {!r}", display_name, db_token)
                 queue = await self.declare_durable_queue(config=config, channel=channel)
@@ -544,7 +545,7 @@ class QueueManager:
                     await self._bind_metrics(
                         metrics=bindinds,
                         queue=queue,
-                        exchange=self.data_exchange,
+                        exchange=exchange,
                         channel=channel,
                     )
                 return queue
@@ -555,12 +556,14 @@ class QueueManager:
                     config=data_config,
                     bindinds=data_bindings,
                     channel=channel,
+                    exchange=self.data_exchange,
                 ),
                 declare_queue_and_bind(
                     display_name="history request queue",
                     config=hreq_config,
                     bindinds=history_bindings,
                     channel=channel,
+                    exchange=self.history_exchange,
                 ),
             )
 
