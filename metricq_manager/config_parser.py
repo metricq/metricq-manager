@@ -257,11 +257,49 @@ class ConfigParser:
             )
             return None
 
+    def quorum_max_in_memory_bytes(self) -> Optional[int]:
+        max_in_memory_bytes: Any = self.get(f"{self.role}-max-in-memory-bytes")
+        if max_in_memory_bytes is None:
+            return None
+        elif isinstance(max_in_memory_bytes, int):
+            if max_in_memory_bytes >= 0:
+                return max_in_memory_bytes
+            else:
+                logger.warning(
+                    "Client {!r} has negative queue bytes-in-memory limit (is {} bytes)",
+                    self.client_token,
+                    max_in_memory_bytes,
+                )
+                return None
+
+    def quorum_max_in_memory_length(self) -> Optional[int]:
+        max_in_memory_length: Any = self.get(f"{self.role}-max-in-memory-length")
+        if max_in_memory_length is None:
+            return None
+        elif isinstance(max_in_memory_length, int):
+            if max_in_memory_length >= 0:
+                return max_in_memory_length
+            else:
+                logger.warning(
+                    "Client {!r} has negative maximum number of in-memory messages (is {})",
+                    self.client_token,
+                    max_in_memory_length,
+                )
+                return None
+
     def quorum_arguments(self) -> Iterator[Tuple[str, Any]]:
         """An iterator over `key-value` pairs of arguments for queues of type
         :literal:`"quorum"`, as parsed from the configuration object.
         """
         yield ("x-queue-type", "quorum")
+
+        max_in_memory_length = self.quorum_max_in_memory_length()
+        if max_in_memory_length is not None:
+            yield ("x-max-in-memory-length", max_in_memory_length)
+
+        max_in_memory_bytes = self.quorum_max_in_memory_bytes()
+        if max_in_memory_bytes is not None:
+            yield ("x-max-in-memory-bytes", max_in_memory_bytes)
 
     def arguments(self) -> Iterator[Tuple[str, Any]]:
         """An iterator over `key-value` pairs of arguments for queues, as
