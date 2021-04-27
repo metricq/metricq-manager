@@ -61,6 +61,7 @@ class MetricqDbPreregister(metricq.Agent):
         server: str,
         data_exchange: str,
         history_exchange: str,
+        declare_history_bindings: bool,
         data_vhost: str,
         couchdb: CouchDB,
         dry_run: bool,
@@ -74,6 +75,7 @@ class MetricqDbPreregister(metricq.Agent):
         self.data_vhost = data_vhost
         self.data_exchange = data_exchange
         self.history_exchange = history_exchange
+        self.declare_history_bindings = declare_history_bindings
         self.couchdb_client = couchdb
         self.dry_run = dry_run
         super().__init__(
@@ -114,7 +116,9 @@ class MetricqDbPreregister(metricq.Agent):
         ) as response:
             return [binding["routing_key"] for binding in await response.json()]
 
-    async def fetch_bindings(self, db_token: str) -> Tuple[List[Metric], List[Metric]]:
+    async def fetch_bindings(
+        self, db_token: str
+    ) -> Tuple[List[Metric], Optional[List[Metric]]]:
         auth = (
             aiohttp.BasicAuth(
                 login=self.http_api_url.user, password=self.http_api_url.password
@@ -126,20 +130,24 @@ class MetricqDbPreregister(metricq.Agent):
         hreq_queue = f"{db_token}-hreq"
 
         async with ClientSession(auth=auth) as session:
-            data_bindings, history_bindings = await asyncio.gather(
-                self.fetch_queue_bindings(
-                    http_session=session,
-                    exchange=self.data_exchange,
-                    queue=data_queue,
-                ),
-                self.fetch_queue_bindings(
+            data_bindings_fetch_task = self.fetch_queue_bindings(
+                http_session=session,
+                exchange=self.data_exchange,
+                queue=data_queue,
+            )
+
+            if self.declare_history_bindings:
+                history_bindings_fetch_task = self.fetch_queue_bindings(
                     http_session=session,
                     exchange=self.history_exchange,
                     queue=hreq_queue,
-                ),
-            )
+                )
 
-            return data_bindings, history_bindings
+                return await asyncio.gather(
+                    data_bindings_fetch_task, history_bindings_fetch_task
+                )
+            else:
+                return await data_bindings_fetch_task, None
 
     async def preregister(self, db_token: str):
         data_bindings, history_bindings = await self.fetch_bindings(db_token=db_token)
@@ -147,7 +155,7 @@ class MetricqDbPreregister(metricq.Agent):
             "Database {!r} had {} data and {} history binding(s)",
             db_token,
             len(data_bindings),
-            len(history_bindings),
+            len(history_bindings) if history_bindings is not None else "no",
         )
 
         if self.dry_run:
@@ -201,6 +209,11 @@ class MetricqDbPreregister(metricq.Agent):
     help="History exchange for history requests",
 )
 @click.option(
+    "--history-bindings/--no-history-bindings",
+    default=True,
+    help="Whether to declare history bindings for this database",
+)
+@click.option(
     "--couchdb-url",
     default="http://localhost:5984",
     help="Address of the configuration backend",
@@ -223,6 +236,7 @@ def preregister_command(
     data_vhost,
     data_exchange,
     history_exchange,
+    history_bindings: bool,
     couchdb_url,
     couchdb_user,
     couchdb_password,
@@ -247,6 +261,7 @@ def preregister_command(
             server=server,
             data_exchange=data_exchange,
             history_exchange=history_exchange,
+            declare_history_bindings=history_bindings,
             couchdb=couchdb,
             data_vhost=data_vhost,
             dry_run=dry_run,
