@@ -69,7 +69,7 @@ class MetricqDbPreregister(metricq.Agent):
         self.http_api_url = (
             URL(server).with_scheme("https").with_port(None)
             if http_api_url is None
-            else http_api_url
+            else URL(http_api_url)
         )
         self.data_vhost = data_vhost
         self.data_exchange = data_exchange
