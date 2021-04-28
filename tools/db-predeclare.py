@@ -29,7 +29,7 @@
 
 import asyncio
 import logging
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 from urllib.parse import quote
 
 import aiohttp
@@ -117,7 +117,12 @@ class MetricqDbPreregister(metricq.Agent):
             return [binding["routing_key"] for binding in await response.json()]
 
     async def fetch_bindings(
-        self, db_token: str
+        self,
+        db_token: str,
+        *,
+        bindings_source: Optional[str] = None,
+        data_bindings_source: Optional[str] = None,
+        history_bindings_source: Optional[str] = None,
     ) -> Tuple[List[Metric], Optional[List[Metric]]]:
         auth = (
             aiohttp.BasicAuth(
@@ -126,8 +131,13 @@ class MetricqDbPreregister(metricq.Agent):
             if self.http_api_url.user and self.http_api_url.password
             else None
         )
-        data_queue = f"{db_token}-data"
-        hreq_queue = f"{db_token}-hreq"
+
+        if bindings_source is not None:
+            data_queue = f"{bindings_source}-data"
+            hreq_queue = f"{bindings_source}-hreq"
+        else:
+            data_queue = data_bindings_source or f"{db_token}-data"
+            hreq_queue = history_bindings_source or f"{db_token}-hreq"
 
         async with ClientSession(auth=auth) as session:
             data_bindings_fetch_task = self.fetch_queue_bindings(
@@ -149,8 +159,15 @@ class MetricqDbPreregister(metricq.Agent):
             else:
                 return await data_bindings_fetch_task, None
 
-    async def preregister(self, db_token: str):
-        data_bindings, history_bindings = await self.fetch_bindings(db_token=db_token)
+    async def predeclare(
+        self,
+        db_token: str,
+        **kwargs,
+    ):
+        data_bindings, history_bindings = await self.fetch_bindings(
+            db_token=db_token,
+            **kwargs,
+        )
         logger.info(
             "Database {!r} had {} data and {} history binding(s)",
             db_token,
@@ -179,6 +196,24 @@ class MetricqDbPreregister(metricq.Agent):
         if self.queue_manager:
             await self.queue_manager.close()
         await super().stop(exception)
+
+
+def parse_predeclare_args(db_token: str) -> Dict[str, Optional[str]]:
+    parts = db_token.split(":", maxsplit=1)
+    db_token = parts[0]
+
+    try:
+        params = dict([kv.split("=", maxsplit=1)[0:2] for kv in parts[1].split(",")])  # type: ignore
+
+        logger.info(f"{params=}")
+        return {
+            "db_token": db_token,
+            "bindings_source": params.get("from"),
+            "data_bindings_source": params.get("data"),
+            "history_bindings_source": params.get("hreq"),
+        }
+    except (KeyError, IndexError):
+        return {"db_token": db_token}
 
 
 @click.command()
@@ -228,11 +263,11 @@ class MetricqDbPreregister(metricq.Agent):
     is_flag=True,
     help="Do not declare queues, print what would've been done",
 )
-@click.argument("DB_TOKEN", nargs=-1)
+@click.argument("DB_SPEC", nargs=-1)
 def preregister_command(
     server,
     rabbitmq_api,
-    db_token,
+    db_spec,
     data_vhost,
     data_exchange,
     history_exchange,
@@ -242,7 +277,7 @@ def preregister_command(
     couchdb_password,
     dry_run: bool,
 ):
-    """Declare database queues for a databases called DB_TOKEN in advance.
+    """Declare database queues in advance.
 
     Use this script if you changed the configuration of a database and need to
     restart it with minimal data loss.  This script will declare a database's
@@ -251,8 +286,26 @@ def preregister_command(
     data.  After restarting the database, it will be assigned the updated
     queues, discard duplicate metric data and proceed without dataloss.
 
-    DB_TOKEN is the name of a database connected to the network.
+    DB_SPEC describes for what database to predeclare queues.  It has the form
+    of DB_TOKEN[:PARAM=VALUE,...]], where DB_TOKEN is the name of a
+    database connected to the network.  Optionally suffix the database token
+    with a parameter-value list to control from which queues bindings are inherited:
+
+        * data=...: queue to inherit data bindings from (default: {DB_TOKEN}-data)
+
+        * hreq=...: queue to inherit history requests bindings from (default: {DB_TOKEN}-hreq)
+
+        * from=...:  alternate database token to inherit both data and history bindings from
+
+    Example:
+
+        Pre-declare queues for the database "db-clone", but copy both data and
+        history bindings from the database "db-original" instead of "db-clone".
+
+        $ db-predeclare db-clone:from=db-original
     """
+
+    predeclare_args = [parse_predeclare_args(spec) for spec in db_spec]
 
     async def run():
         couchdb = CouchDB(couchdb_url, user=couchdb_user, password=couchdb_password)
@@ -270,9 +323,9 @@ def preregister_command(
 
         try:
             await d.connect()
-            await asyncio.gather(*(d.preregister(db_token) for db_token in db_token))
-        except Exception as e:
-            logger.error("Failed to preregister database queue: {}", e)
+            await asyncio.gather(*(d.predeclare(**args) for args in predeclare_args))
+        except Exception:
+            logger.exception("Failed to preregister database queue")
         finally:
             await d.stop(None)
 
