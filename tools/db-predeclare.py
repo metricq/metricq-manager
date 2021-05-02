@@ -114,7 +114,11 @@ class MetricqDbPreregister(metricq.Agent):
                 f"/api/bindings/{vhost}/e/{exchange}/q/{queue}/", encoded=True
             )
         ) as response:
-            return [binding["routing_key"] for binding in await response.json()]
+            bindings_json = await response.json()
+            if not response.ok:
+                error = bindings_json.get("error")
+                raise RuntimeError(f"RabbitMQ API returned an error: {error}")
+            return [binding["routing_key"] for binding in bindings_json]
 
     async def fetch_bindings(
         self,
