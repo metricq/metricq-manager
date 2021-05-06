@@ -408,6 +408,12 @@ class Manager(Agent):
                     metrics_updated += 1
 
                 update_doc(doc, metrics[doc.id], update_date)
+
+                source = doc.get("source")
+                if source is not None and source != from_token:
+                    logger.warning(
+                        f"Changing source for metric '{doc.id}' from {source} to {from_token}"
+                    )
                 doc["source"] = from_token
         end = time.time()
 
