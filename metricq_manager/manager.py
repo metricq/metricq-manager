@@ -247,6 +247,8 @@ class Manager(Agent):
         # TODO figure out why auto-assigned queues cannot be used by the client
         metrics = body.get("metrics", [])
 
+        logger.info("Subscribing {!r} to {} metric(s)...", from_token, len(metrics))
+
         queue = await self.queue_manager.sink_declare_data_queue(
             client_token=from_token,
             queue_name=body.get("dataQueue"),
@@ -255,10 +257,7 @@ class Manager(Agent):
         )
 
         logger.info(
-            "Declared data queue {!r} for {} (bound {} metric(s))",
-            queue,
-            from_token,
-            len(metrics),
+            "Subscribed {!r} to {} metric(s) on {!r}", from_token, len(metrics), queue
         )
 
         metrics_metadata = await self.fetch_metadata(metrics) if metadata else metrics
@@ -295,35 +294,42 @@ class Manager(Agent):
 
     @rpc_handler("release", "sink.release")
     async def handle_release(self, from_token, **body):
+        queue_name = body["dataQueue"]
         if self._subscription_autodelete:
             logger.debug(
-                "release {} for {} ignored, auto-delete", body["dataQueue"], from_token
+                "Ignoring request to release data queue of {!r} (queue {} is auto-delete)",
+                queue_name,
+                from_token,
             )
         else:
-            queue_name = body["dataQueue"]
             if not (queue_name.startswith(from_token) and queue_name.endswith("-data")):
                 raise ValueError("Invalid subscription queue name")
 
-            logger.debug("Releasing data queue {} of Sink {!r}", queue_name, from_token)
+            logger.debug("Releasing data queue {} of {!r}", queue_name, from_token)
 
             await self.queue_manager.sink_delete_data_queue(queue_name)
 
     @rpc_handler("sink.register")
     async def handle_sink_register(self, from_token, **body):
+        logger.info("Registering sink {!r}", from_token)
         response = {
             "dataServerAddress": self.data_server_address,
             "config": await self.read_config(from_token),
         }
         return response
 
-    @rpc_handler("source.register")
-    async def handle_source_register(self, from_token, **body):
+    async def _source_register(self, from_token, **body):
         response = {
             "dataServerAddress": self.data_server_address,
             "dataExchange": self.queue_manager.data_exchange,
             "config": await self.read_config(from_token),
         }
         return response
+
+    @rpc_handler("source.register")
+    async def handle_source_register(self, from_token, **body):
+        logger.info("Registering source {!r}", from_token)
+        return await self._source_register(from_token=from_token, **body)
 
     def _get_queue_arguments_from_config(self, config):
         arguments = dict()
@@ -337,17 +343,16 @@ class Manager(Agent):
 
     @rpc_handler("transformer.register")
     async def handle_transformer_register(self, from_token, **body):
-        response = await self.handle_source_register(from_token, **body)
-        return response
+        logger.info("Registering transformer {!r}", from_token)
+        return await self._source_register(from_token=from_token, **body)
 
     @rpc_handler("transformer.subscribe")
     async def handle_transformer_subscribe(self, from_token, metrics, **body):
-        logger.debug("attempting to declare queue for {}", from_token)
+        logger.info("Subscribing {!r} to {} metric(s)...", from_token, len(metrics))
         data_queue = await self.queue_manager.transformer_declare_data_queue(
             transformer_token=from_token,
             bindinds=metrics,
         )
-        logger.debug("declared queue {} for {}", data_queue, from_token)
 
         return {
             "dataServerAddress": self.data_server_address,
@@ -357,13 +362,16 @@ class Manager(Agent):
 
     @rpc_handler("source.metrics_list", "transformer.metrics_list")
     async def handle_source_metadata(self, from_token, **body):
-        logger.warning("called deprecated source.metrics_list by {}", from_token)
+        logger.warning(
+            "Client {!r} called deprecated source.metrics_list or transformer.metrics_list",
+            from_token,
+        )
         await self.handle_source_declare_metrics(from_token, **body)
 
     @rpc_handler("source.declare_metrics", "transformer.declare_metrics")
     async def handle_source_declare_metrics(self, from_token, metrics=None, **body):
         if metrics is None:
-            logger.warning("client {} called declare_metrics without metrics")
+            logger.warning("Client {!r} called declare_metrics without metrics")
             return
 
         # Convert metrics list to simple dict
@@ -380,7 +388,7 @@ class Manager(Agent):
         def update_doc(doc, metadata, update_date):
             if "source" in metadata:
                 logger.warn(
-                    f"ignoring reserved field 'source' for metadata for '{doc.id}' from '{from_token}'"
+                    f"Ignoring reserved field 'source' for metadata for '{doc.id}' from '{from_token}'"
                 )
                 del metadata["source"]
 
@@ -389,7 +397,7 @@ class Manager(Agent):
 
             if "historic" in metadata:
                 logger.warn(
-                    f"ignoring reserved metadata field 'historic' for '{doc.id}' from {from_token}"
+                    f"Ignoring reserved metadata field 'historic' for '{doc.id}' from {from_token}"
                 )
                 del metadata["historic"]
 
@@ -419,7 +427,8 @@ class Manager(Agent):
 
         if len(docs.status) != len(metrics):
             logger.error(
-                "metadata update mismatch in metrics count expected {}, actual {}",
+                "Metadata update mismatch for {!r}: expected to update {} metric(s), have {}",
+                from_token,
                 len(metrics),
                 len(docs.status),
             )
@@ -427,13 +436,17 @@ class Manager(Agent):
         for s in docs.status:
             if "error" in s:
                 error = True
-                logger.error("error updating metadata {}", s)
+                logger.error("Error updating metadata for {!r}: {}", from_token, s)
+
         logger.info(
-            "metadata update took {:.3f} s for {} new and {} existing metrics",
-            end - start,
+            "Client {!r} declared {} metric(s): {} new, {} updated (took {:.3f} seconds)",
+            from_token,
+            len(metrics),
             metrics_new,
             metrics_updated,
+            end - start,
         )
+
         if error:
             raise RuntimeError("metadata update failed")
 
@@ -502,7 +515,7 @@ class Manager(Agent):
         if historic is not None:
             if not isinstance(historic, bool):
                 raise AttributeError(
-                    'invalid type for "historic" argument: should be bool, is {}'.format(
+                    'Invalid type for "historic" argument: should be bool, is {}'.format(
                         type(historic)
                     )
                 )
@@ -565,7 +578,7 @@ class Manager(Agent):
 
         return {"metrics": metrics}
 
-    async def _mark_db_metrics(self, metric_names):
+    async def _mark_db_metrics(self, db_token, metric_names):
         """
         "UPDATE metadata SET historic=True WHERE _id in {metric_names}"
         in 38-33 beautiful lines of python code
@@ -582,9 +595,10 @@ class Manager(Agent):
         for s in docs.status:
             if "error" in s:
                 error = True
-                logger.error("error updating metadata {}", s)
+                logger.error("Error updating metadata for {!r}: {}", db_token, s)
         logger.info(
-            "historic metadata update took {:.3f} s for {} metrics",
+            "Updated historic metadata for {!r}: took {:.3f} seconds for {} metric(s)",
+            db_token,
             end - start,
             len(metric_names),
         )
@@ -593,8 +607,14 @@ class Manager(Agent):
 
     @rpc_handler("db.subscribe")
     async def handle_db_subscribe(self, from_token, metrics, metadata=True, **body):
+        logger.info("Subscribing {!r} to {} metric(s)...", from_token, len(metrics))
+
         data_queue, hreq_queue, metrics = await self.db_subscribe(
             db_token=from_token, metrics=metrics, metadata=metadata
+        )
+
+        logger.info(
+            "Successfully subscribed {!r} to {} metric(s)", from_token, len(metrics)
         )
 
         return {
@@ -642,7 +662,7 @@ class Manager(Agent):
         )
 
         # TODO unbind other metrics that are no longer relevant
-        await self._mark_db_metrics(history_bindings)
+        await self._mark_db_metrics(db_token, history_bindings)
 
         if metadata:
             metrics_metadata = await self.fetch_metadata(history_bindings)
@@ -653,6 +673,7 @@ class Manager(Agent):
 
     @rpc_handler("db.register")
     async def handle_db_register(self, from_token, **body):
+        logger.info("Registering database {!r}", from_token)
         config = await self.read_config(from_token)
 
         data_queue: DataQueueName
