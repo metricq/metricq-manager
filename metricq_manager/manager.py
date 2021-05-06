@@ -414,7 +414,7 @@ class Manager(Agent):
 
                 update_doc(doc, metrics[doc.id], update_date)
 
-                if "source" in doc and doc["source"]:
+                if "source" in doc and doc["source"] and doc["source"] != from_token:
                     logger.warn(
                         f"Changing source for metric '{doc.id}' from {doc['source']} to {from_token}"
                     )
