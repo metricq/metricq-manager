@@ -413,6 +413,11 @@ class Manager(Agent):
                     metrics_updated += 1
 
                 update_doc(doc, metrics[doc.id], update_date)
+
+                if "source" in doc and doc["source"]:
+                    logger.warn(
+                        f"Changing source for metric '{doc.id}' from {doc['source']} to {from_token}"
+                    )
                 doc["source"] = from_token
         end = time.time()
 
