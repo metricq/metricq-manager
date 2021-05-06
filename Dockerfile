@@ -1,4 +1,4 @@
-FROM metricq/metricq-python:latest AS builder
+FROM metricq/metricq-python:v3 AS builder
 LABEL maintainer="mario.bielert@tu-dresden.de"
 
 USER root
