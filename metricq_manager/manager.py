@@ -53,11 +53,6 @@ class MetricInputAlias(TypedDict, total=False):
 DbMetricBindings = List[Union[Metric, MetricInputAlias]]
 
 
-class LegacyMetricConfig(TypedDict):
-    input: Metric
-    prefix: str
-
-
 logger = get_logger()
 
 click_log.basic_config(logger)
@@ -651,28 +646,6 @@ class Manager(Agent):
 
         return (data_queue, history_queue, metrics_metadata)
 
-    @staticmethod
-    def db_parse_legacy_bindings(
-        metric_configs: Dict[Metric, LegacyMetricConfig]
-    ) -> DbMetricBindings:
-        """Parse a list of metric bindings from the `metric_configs` argument of a db.register call"""
-        # TODO once all deployed databases support an explicit subscribe, this part can be removed
-        # this emulates the RPC format of db.subscribe
-        def convert_metric_config(
-            metric_name: Metric, metric_config: LegacyMetricConfig
-        ) -> Union[Metric, MetricInputAlias]:
-            if "prefix" in metric_config and metric_config["prefix"]:
-                raise ValueError("prefix no longer supported in the manager")
-            elif "input" in metric_config:
-                return {"name": metric_name, "input": metric_config["input"]}
-            else:
-                return metric_name
-
-        return [
-            convert_metric_config(*metric_item)
-            for metric_item in metric_configs.items()
-        ]
-
     @rpc_handler("db.register")
     async def handle_db_register(self, from_token, **body):
         config = await self.read_config(from_token)
@@ -680,21 +653,9 @@ class Manager(Agent):
         data_queue: DataQueueName
         history_queue: HreqQueueName
 
-        metric_configs = config.get("metrics")
-        if metric_configs:
-            logger.warn(
-                "Database {!r} relies on legacy behaviour to parse bindings from its config. "
-                "Make sure it explicitly calls `db.subscribe`!",
-                from_token,
-            )
-            bindings = self.db_parse_legacy_bindings(metric_configs)
-            data_queue, history_queue, _ = await self.db_subscribe(
-                from_token, metrics=bindings, metadata=False
-            )
-        else:
-            data_queue, history_queue = await self.queue_manager.db_declare_queues(
-                from_token
-            )
+        data_queue, history_queue = await self.queue_manager.db_declare_queues(
+            from_token
+        )
 
         return {
             "dataServerAddress": self.data_server_address,
