@@ -387,7 +387,7 @@ class Manager(Agent):
 
         def update_doc(doc, metadata, update_date):
             if "source" in metadata:
-                logger.warn(
+                logger.warning(
                     f"Ignoring reserved field 'source' for metadata for '{doc.id}' from '{from_token}'"
                 )
                 del metadata["source"]
@@ -396,7 +396,7 @@ class Manager(Agent):
                 doc["date"] = update_date
 
             if "historic" in metadata:
-                logger.warn(
+                logger.warning(
                     f"Ignoring reserved metadata field 'historic' for '{doc.id}' from {from_token}"
                 )
                 del metadata["historic"]
