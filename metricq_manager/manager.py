@@ -593,7 +593,6 @@ class Manager(Agent):
 
         return {
             "dataServerAddress": self.data_server_address,
-            "dataExchange": self.queue_manager.data_exchange,
             "dataQueue": data_queue,
             "historyQueue": hreq_queue,
             "metrics": metrics,
@@ -660,6 +659,7 @@ class Manager(Agent):
         return {
             "dataServerAddress": self.data_server_address,
             "dataQueue": data_queue,
+            "dataExchange": self.queue_manager.data_exchange,
             "historyQueue": history_queue,
             "config": config,
         }
