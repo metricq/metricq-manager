@@ -225,7 +225,7 @@ class ConfigParser:
             yield ("x-message-ttl", message_ttl)
 
     def message_ttl(self) -> Optional[int]:
-        """Parse message `time-to-live <https://www.rabbitmq.com/ttl.html#queue-ttl>`_
+        """Parse message `time-to-live <https://www.rabbitmq.com/ttl.html#per-message-ttl-in-publishers>`_
         argument for messages in a classic queue.
 
         Does not apply to quorum queues.
