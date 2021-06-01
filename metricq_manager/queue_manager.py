@@ -422,6 +422,10 @@ class QueueManager:
             queue = await channel.get_queue(queue_name)
             await queue.delete(if_unused=False, if_empty=False)
 
+    # If no consumer connect, history response queues are deleted automatically
+    # after a while.
+    DEFAULT_HISTORY_RESPONSE_QUEUE_TTL = 600_000  # 10 minutes
+
     async def history_declare_response_queue(self, history_token: str) -> HreqQueueName:
         """Declare a HistoryClient's history response queue.
 
@@ -434,6 +438,12 @@ class QueueManager:
         config = await self.read_config(history_token, role="hrsp", allow_missing=True)
         queue_name = config.queue_name(unique=False)
         arguments = dict(config.classic_arguments())
+
+        queue_ttl = config.queue_ttl()
+        if queue_ttl is None:
+            queue_ttl = self.DEFAULT_HISTORY_RESPONSE_QUEUE_TTL
+
+        arguments["x-expires"] = queue_ttl
 
         async with self.temporary_channel() as channel:
             hreq_queue = await self.declare_queue(

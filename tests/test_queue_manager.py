@@ -147,7 +147,12 @@ async def test_declare_history_queue_no_config(data_connection, empty_db):
 
     await manager.history_declare_response_queue("history-foo")
 
-    channel.declare_queue.assert_called_once()
+    # Make sure history response queues expire by default
+    args, kwargs = channel.declare_queue.call_args
+    assert (
+        kwargs["arguments"]["x-expires"]
+        == QueueManager.DEFAULT_HISTORY_RESPONSE_QUEUE_TTL
+    )
 
 
 async def test_declare_transformer_queue_no_config(data_connection, empty_db):
