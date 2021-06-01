@@ -21,6 +21,7 @@
 import datetime
 import logging
 import time
+from contextlib import suppress
 from itertools import islice
 from typing import Any, Dict, List, Optional, Tuple, TypedDict, Union
 
@@ -221,14 +222,8 @@ class Manager(Agent):
 
         await super().stop(exception)
 
-    async def read_config(self, token, *, allow_missing=False):
-        try:
-            return (await self.couchdb_db_config[token]).data
-        except NotFoundError:
-            if allow_missing:
-                return {}
-            else:
-                raise
+    async def read_config(self, token):
+        return (await self.couchdb_db_config[token]).data
 
     async def rpc(self, function, to_token=None, **kwargs):
         if to_token:
@@ -452,8 +447,6 @@ class Manager(Agent):
 
     @rpc_handler("history.register")
     async def handle_history_register(self, from_token, **body):
-        config = await self.read_config(from_token, allow_missing=True)
-
         logger.debug(
             "attempting to declare queue history response queue for {}", from_token
         )
@@ -467,8 +460,11 @@ class Manager(Agent):
             "dataServerAddress": self.data_server_address,
             "historyExchange": self.queue_manager.history_exchange,
             "historyQueue": history_queue,
-            "config": config,
         }
+
+        with suppress(NotFoundError):
+            response["config"] = await self.read_config(from_token)
+
         return response
 
     @rpc_handler("history.get_metric_list")
