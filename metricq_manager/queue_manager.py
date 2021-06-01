@@ -266,6 +266,8 @@ class QueueManager:
 
         return ConfigParser(config=config, role=role, client_token=client_token)
 
+    DEFAULT_SINK_DATA_QUEUE_TTL = 600_000
+
     async def sink_declare_data_queue(
         self,
         client_token: str,
@@ -299,15 +301,18 @@ class QueueManager:
         arguments = dict(config.classic_arguments())
 
         if isinstance(expires, (int, float)) and expires > 0:
-            arguments["x-expires"] = int(1000 * expires)
+            expires = int(1000 * expires)
         elif expires is None:
-            pass
+            expires = self.DEFAULT_SINK_DATA_QUEUE_TTL
         else:
             logger.warning(
-                "Invalid message expiry requested from {!r}: {!r} is not a positive number of seconds",
+                "Invalid queue expiry requested from {!r}: {!r} is not a positive number of seconds",
                 client_token,
                 expires,
             )
+            expires = self.DEFAULT_SINK_DATA_QUEUE_TTL
+
+        arguments["x-expires"] = expires
 
         async with self.temporary_channel() as channel:
             data_queue = await self.declare_queue(

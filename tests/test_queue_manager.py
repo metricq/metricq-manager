@@ -117,6 +117,7 @@ async def test_declare_sink_queue(data_connection, empty_db):
     args, kwargs = channel.declare_queue.call_args
     assert not kwargs["robust"]
     assert kwargs["auto_delete"]
+    assert kwargs["arguments"]["x-expires"] == QueueManager.DEFAULT_SINK_DATA_QUEUE_TTL
 
 
 async def test_declare_sink_queue_default_queue_name(data_connection, empty_db):
