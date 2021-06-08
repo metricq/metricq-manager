@@ -225,7 +225,7 @@ class ConfigParser:
             yield ("x-message-ttl", message_ttl)
 
     def message_ttl(self) -> Optional[int]:
-        """Parse message `time-to-live <https://www.rabbitmq.com/ttl.html#queue-ttl>`_
+        """Parse message `time-to-live <https://www.rabbitmq.com/ttl.html#per-message-ttl-in-publishers>`_
         argument for messages in a classic queue.
 
         Does not apply to quorum queues.
@@ -254,6 +254,37 @@ class ConfigParser:
                 self.client_token,
                 message_ttl,
                 type(message_ttl),
+            )
+            return None
+
+    def queue_ttl(self) -> Optional[int]:
+        """Parse per queue `time-to-live <https://www.rabbitmq.com/ttl.html#queue-ttl>`_
+        argument for messages in a classic queue.
+
+        Does not apply to quorum queues.
+        """
+        queue_ttl: Any = self.get(f"{self.role}-queue-ttl")
+
+        if queue_ttl is None:
+            return None
+        elif isinstance(queue_ttl, (float, int)):
+            ttl = int(1000 * queue_ttl)
+
+            if ttl >= 0:
+                return ttl
+            else:
+                logger.warning(
+                    "Client {!r} has queue TTL that is not a positive number of seconds (got {})",
+                    self.client_token,
+                    ttl,
+                )
+                return None
+        else:
+            logger.warning(
+                "Client {!r} has queue TTL which is not a number of seconds: got {} of type {!r}",
+                self.client_token,
+                queue_ttl,
+                type(queue_ttl),
             )
             return None
 

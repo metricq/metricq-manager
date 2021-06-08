@@ -243,6 +243,23 @@ def test_parse_classic_queue_message_ttl(config, expected_message_ttl):
 
 
 @pytest.mark.parametrize(
+    ("config", "expected_queue_ttl"),
+    [
+        # Default, no TTL set
+        ({}, None),
+        # Explicit TTL
+        (x_metricq({"test-queue-ttl": 1}), 1000),
+        # Invalid TTL, ignored
+        (x_metricq({"test-message-ttl": "invalid"}), None),
+    ],
+)
+def test_parse_classic_queue_ttl(config, expected_queue_ttl):
+    config_parser = ConfigParser(config, role="test", client_token=DEFAULT_CLIENT_TOKEN)
+
+    assert config_parser.queue_ttl() == expected_queue_ttl
+
+
+@pytest.mark.parametrize(
     ("config", "arguments"),
     [
         ({}, {}),
