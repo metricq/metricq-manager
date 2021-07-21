@@ -149,6 +149,12 @@ class Manager(Agent):
             exists_ok=True,
         )
 
+        await index.create_view(
+            "not_hidden",
+            map_function="function (doc) { if(!doc.hidden && doc.historic) { emit(doc._id, null); } }",
+            exists_ok=True,
+        )
+
         components = await self.couchdb_db_metadata.design_doc(
             "components", exists_ok=True
         )
@@ -170,6 +176,26 @@ class Manager(Agent):
     })
   }
 }""",
+            exists_ok=True,
+        )
+        await components.create_view(
+            "not_hidden",
+            map_function="""function (doc) {
+          if(!doc.hidden && doc.historic)
+          {
+            var name = ''
+            var components = doc._id.split('.')
+            components.reverse()
+            components.forEach(function (key) {
+              if (name === '') {
+                name = key
+              } else {
+                name = key + '.' + name
+              }
+              emit(name, null)
+            })
+          }
+        }""",
             exists_ok=True,
         )
 
@@ -484,6 +510,7 @@ class Manager(Agent):
         prefix=None,
         infix=None,
         limit=None,
+        hidden=None,
         **body,
     ):
         if format not in ("array", "object"):
@@ -516,12 +543,22 @@ class Manager(Agent):
                     )
                 )
 
+        if hidden is not None:
+            if not isinstance(hidden, bool):
+                raise AttributeError(
+                    'Invalid type for "hidden" argument: should be bool, is {}'.format(
+                        type(hidden)
+                    )
+                )
+
         # TODO can this be unified without compromising performance?
         # Does this even perform well?
         # ALSO: Async :-[
         if selector_dict:
             if historic is not None:
                 selector_dict["historic"] = historic
+            if hidden is not None:
+                selector_dict["hidden"] = hidden
             if prefix is not None or infix is not None:
                 raise AttributeError(
                     'cannot get_metrics with both "selector" and "prefix" or "infix".'
@@ -537,7 +574,13 @@ class Manager(Agent):
             if infix is None:
                 request_prefix = prefix
                 if historic is not None:
-                    endpoint = self.couchdb_db_metadata.view("index", "historic")
+                    # return all historic metrics, both hidden and unhidden
+                    if hidden is None:
+                        endpoint = self.couchdb_db_metadata.view("index", "historic")
+                    elif not hidden:
+                        endpoint = self.couchdb_db_metadata.view("index", "not_hidden")
+                    else:
+                        raise NotImplementedError("hidden lookup not yet supported")
                 else:
                     endpoint = self.couchdb_db_metadata.all_docs
             else:
@@ -547,7 +590,17 @@ class Manager(Agent):
                 if limit is not None:
                     request_limit = 6 * limit
                 if historic is not None:
-                    endpoint = self.couchdb_db_metadata.view("components", "historic")
+                    # return all historic metrics, both hidden and unhidden
+                    if hidden is None:
+                        endpoint = self.couchdb_db_metadata.view(
+                            "components", "historic"
+                        )
+                    elif not hidden:
+                        endpoint = self.couchdb_db_metadata.view(
+                            "components", "not_hidden"
+                        )
+                    else:
+                        raise NotImplementedError("hidden lookup not yet supported")
                 else:
                     raise NotImplementedError(
                         "non-historic infix lookup not yet supported"
