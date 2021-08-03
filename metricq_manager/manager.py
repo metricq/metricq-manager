@@ -150,7 +150,7 @@ class Manager(Agent):
         )
 
         await index.create_view(
-            "not_hidden",
+            "not_hidden_and_historic",
             map_function="function (doc) { if(!doc.hidden && doc.historic) { emit(doc._id, null); } }",
             exists_ok=True,
         )
@@ -179,7 +179,7 @@ class Manager(Agent):
             exists_ok=True,
         )
         await components.create_view(
-            "not_hidden",
+            "not_hidden_and_historic",
             map_function="""function (doc) {
           if(!doc.hidden && doc.historic)
           {
@@ -578,7 +578,9 @@ class Manager(Agent):
                     if hidden is None:
                         endpoint = self.couchdb_db_metadata.view("index", "historic")
                     elif not hidden:
-                        endpoint = self.couchdb_db_metadata.view("index", "not_hidden")
+                        endpoint = self.couchdb_db_metadata.view(
+                            "index", "not_hidden_and_historic"
+                        )
                     else:
                         raise NotImplementedError("hidden lookup not yet supported")
                 else:
@@ -597,7 +599,7 @@ class Manager(Agent):
                         )
                     elif not hidden:
                         endpoint = self.couchdb_db_metadata.view(
-                            "components", "not_hidden"
+                            "components", "not_hidden_and_historic"
                         )
                     else:
                         raise NotImplementedError("hidden lookup not yet supported")
