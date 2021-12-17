@@ -23,7 +23,6 @@ from urllib.parse import quote
 
 from aiohttp import BasicAuth, ClientSession
 from yarl import URL
-import metricq
 from metricq.logging import get_logger
 
 
@@ -33,15 +32,11 @@ logger = get_logger(__name__)
 
 
 class RabbitMQRestAPI:
-    def __init__(self, server: URL, data_vhost: str):
-        self.http_api_url = (
-            URL(server).with_scheme("https" if server.scheme == "amqps" else "http").with_port(15672 if server.port else None)
-        )
+    def __init__(self, api_url: str, data_vhost: str):
+        self.http_api_url = URL(api_url)
 
         self.auth = (
-            BasicAuth(
-                login=self.http_api_url.user, password=self.http_api_url.password
-            )
+            BasicAuth(login=self.http_api_url.user, password=self.http_api_url.password)
             if self.http_api_url.user and self.http_api_url.password
             else None
         )
@@ -51,9 +46,7 @@ class RabbitMQRestAPI:
     def data_vhost_quoted(self) -> str:
         return quote(self.data_vhost, safe="")
 
-    async def fetch_queue_bindings(
-        self, exchange: str, queue: str
-    ) -> List[Metric]:
+    async def fetch_queue_bindings(self, exchange: str, queue: str) -> List[Metric]:
 
         vhost = self.data_vhost_quoted()
         get_url = self.http_api_url.with_path(

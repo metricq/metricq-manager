@@ -24,7 +24,7 @@ import logging
 import time
 from contextlib import suppress
 from itertools import islice
-from typing import Any, Dict, List, Optional, Tuple, TypedDict, Union
+from typing import List, Optional, Tuple, TypedDict, Union
 
 import aio_pika
 import aiomonitor
@@ -72,7 +72,7 @@ class Manager(Agent):
         self,
         management_url,
         data_url,
-        config_path,
+        api_url,
         queue_ttl,
         couchdb_url,
         couchdb_user,
@@ -105,9 +105,12 @@ class Manager(Agent):
         self.data_exchange_name = "metricq.data"
         self.history_exchange_name = "metricq.history"
 
-        self.rabbitmq_api = RabbitMQRestAPI(URL(self._management_url), URL(self.data_url).path)
+        # TODO What do we do if management and data are two different rabbitmq instances?
+        # In theory, this already works, if we point the api_url to the data instance.
+        # However, once we use this readily available instance to access the management
+        # instance, this would blow up.
+        self.rabbitmq_api = RabbitMQRestAPI(api_url, URL(self.data_url).path)
 
-        self.config_path = config_path
         self.queue_ttl = queue_ttl
 
         self.couchdb_client = CouchDB(
@@ -349,6 +352,10 @@ class Manager(Agent):
         data_queue = await self.queue_manager.transformer_declare_data_queue(
             transformer_token=from_token,
             bindings=metrics,
+        )
+
+        asyncio.create_task(
+            self.cleanup_bindings(self.data_exchange_name, data_queue, metrics)
         )
 
         return {
@@ -731,12 +738,8 @@ class Manager(Agent):
 @click.command()
 @click.argument("rpc-url", default="amqp://localhost/")
 @click.argument("data-url", default="amqp://localhost/")
+@click.argument("api-url", default="amqp://localhost:15672")
 @click.option("--queue-ttl", default=30 * 60 * 1000)
-@click.option(
-    "--config-path",
-    default=".",
-    type=click.Path(exists=True, file_okay=False, dir_okay=True),
-)
 @click.option("--monitor/--no-monitor", default=True)
 @click.option("--couchdb-url", default="http://127.0.0.1:5984")
 @click.option("--couchdb-user", default="admin")
@@ -746,7 +749,7 @@ class Manager(Agent):
 def manager_cmd(
     rpc_url,
     data_url,
-    config_path,
+    api_url,
     queue_ttl,
     monitor,
     couchdb_url,
@@ -762,13 +765,13 @@ def manager_cmd(
         except ImportError:
             logger.error("Can't enable journal logger, systemd package not found!")
     manager = Manager(
-        rpc_url,
-        data_url,
-        config_path,
-        queue_ttl,
-        couchdb_url,
-        couchdb_user,
-        couchdb_password,
+        management_url=rpc_url,
+        data_url=data_url,
+        api_url=api_url,
+        queue_ttl=queue_ttl,
+        couchdb_url=couchdb_url,
+        couchdb_user=couchdb_user,
+        couchdb_password=couchdb_password,
     )
     if monitor:
         with aiomonitor.start_monitor(manager.event_loop, locals={"manager": manager}):
