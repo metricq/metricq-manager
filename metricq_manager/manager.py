@@ -24,7 +24,7 @@ import logging
 import time
 from contextlib import suppress
 from itertools import islice
-from typing import Any, Dict, List, Optional, Tuple, TypedDict, Union
+from typing import List, Optional, Tuple, TypedDict, Union
 
 import aio_pika
 import aiomonitor
@@ -37,9 +37,8 @@ from metricq.logging import get_logger
 from yarl import URL
 
 from .queue_manager import DataQueueName, HreqQueueName, QueueManager
-
-Metric = str
-MetricList = Union[List[Metric], Dict[Metric, Dict[str, Any]]]
+from .rabbitmq import RabbitMQRestAPI
+from .types import Metric, MetricList
 
 
 class MetricInputAlias(TypedDict, total=False):
@@ -55,7 +54,7 @@ class MetricInputAlias(TypedDict, total=False):
 DbMetricBindings = List[Union[Metric, MetricInputAlias]]
 
 
-logger = get_logger()
+logger = get_logger(__name__)
 
 click_log.basic_config(logger)
 logger.setLevel("INFO")
@@ -73,7 +72,7 @@ class Manager(Agent):
         self,
         management_url,
         data_url,
-        config_path,
+        api_url,
         queue_ttl,
         couchdb_url,
         couchdb_user,
@@ -106,7 +105,12 @@ class Manager(Agent):
         self.data_exchange_name = "metricq.data"
         self.history_exchange_name = "metricq.history"
 
-        self.config_path = config_path
+        # TODO What do we do if management and data are two different rabbitmq instances?
+        # In theory, this already works, if we point the api_url to the data instance.
+        # However, once we use this readily available instance to access the management
+        # instance, this would blow up.
+        self.rabbitmq_api = RabbitMQRestAPI(api_url, URL(self.data_url).path)
+
         self.queue_ttl = queue_ttl
 
         self._couchdb_url = couchdb_url
@@ -279,7 +283,7 @@ class Manager(Agent):
             client_token=from_token,
             queue_name=body.get("dataQueue"),
             expires=body.get("expires"),
-            bindinds=metrics,
+            bindings=metrics,
         )
 
         logger.info(
@@ -377,7 +381,11 @@ class Manager(Agent):
         logger.info("Subscribing {!r} to {} metric(s)...", from_token, len(metrics))
         data_queue = await self.queue_manager.transformer_declare_data_queue(
             transformer_token=from_token,
-            bindinds=metrics,
+            bindings=metrics,
+        )
+
+        asyncio.create_task(
+            self.cleanup_bindings(self.data_exchange_name, data_queue, metrics)
         )
 
         return {
@@ -647,18 +655,17 @@ class Manager(Agent):
                 doc["historic"] = True
         end = time.time()
 
-        error = False
-        for s in docs.status:
-            if "error" in s:
-                error = True
-                logger.error("Error updating metadata for {!r}: {}", db_token, s)
+        for s in docs.error:
+            logger.error("Error updating metadata for {!r}: {}", db_token, s)
+
         logger.info(
             "Updated historic metadata for {!r}: took {:.3f} seconds for {} metric(s)",
             db_token,
             end - start,
             len(metric_names),
         )
-        if error:
+
+        if docs.error:
             raise RuntimeError("metadata update failed")
 
     @rpc_handler("db.subscribe")
@@ -694,7 +701,7 @@ class Manager(Agent):
                 data_bindings.append(metric)
                 history_bindings.append(metric)
             else:
-                # If it is a dictionay, the key "input" specifies an optional input alias.
+                # If it is a dictionary, the key "input" specifies an optional input alias.
                 # If it does not exists, assume there is no alias and fall back to "name".
                 metric_name = metric["name"]
                 input_name = metric.get("input", metric_name)
@@ -702,6 +709,30 @@ class Manager(Agent):
                 history_bindings.append(metric_name)
 
         return data_bindings, history_bindings
+
+    async def cleanup_bindings(
+        self,
+        exchange,
+        queue,
+        bindings,
+    ):
+        current_bindings = await self.rabbitmq_api.fetch_queue_bindings(exchange, queue)
+
+        removable_bindings = set(current_bindings) - set(bindings)
+
+        logger.info(
+            "Deleting {} binding(s) from queue {!r}",
+            len(removable_bindings),
+            queue,
+        )
+        async with self.queue_manager.temporary_channel() as channel:
+            queue = await channel.declare_queue(queue, passive=True)
+            await asyncio.gather(
+                *(
+                    queue.unbind(exchange=exchange, routing_key=metric)
+                    for metric in removable_bindings
+                )
+            )
 
     async def db_subscribe(
         self,
@@ -717,7 +748,22 @@ class Manager(Agent):
             history_bindings=history_bindings,
         )
 
-        # TODO unbind other metrics that are no longer relevant
+        asyncio.create_task(
+            self.cleanup_bindings(
+                exchange=self.data_exchange_name,
+                queue=data_queue,
+                bindings=data_bindings,
+            )
+        )
+
+        asyncio.create_task(
+            self.cleanup_bindings(
+                exchange=self.history_exchange_name,
+                queue=history_queue,
+                bindings=history_bindings,
+            )
+        )
+
         await self._mark_db_metrics(db_token, history_bindings)
 
         if metadata:
@@ -751,12 +797,8 @@ class Manager(Agent):
 @click.command()
 @click.argument("rpc-url", default="amqp://localhost/")
 @click.argument("data-url", default="amqp://localhost/")
+@click.argument("api-url", default="amqp://localhost:15672")
 @click.option("--queue-ttl", default=30 * 60 * 1000)
-@click.option(
-    "--config-path",
-    default=".",
-    type=click.Path(exists=True, file_okay=False, dir_okay=True),
-)
 @click.option("--monitor/--no-monitor", default=True)
 @click.option("--couchdb-url", default="http://127.0.0.1:5984")
 @click.option("--couchdb-user", default="admin")
@@ -766,7 +808,7 @@ class Manager(Agent):
 def manager_cmd(
     rpc_url,
     data_url,
-    config_path,
+    api_url,
     queue_ttl,
     monitor,
     couchdb_url,
@@ -783,13 +825,13 @@ def manager_cmd(
             logger.error("Can't enable journal logger, systemd package not found!")
 
     manager = Manager(
-        rpc_url,
-        data_url,
-        config_path,
-        queue_ttl,
-        couchdb_url,
-        couchdb_user,
-        couchdb_password,
+        management_url=rpc_url,
+        data_url=data_url,
+        api_url=api_url,
+        queue_ttl=queue_ttl,
+        couchdb_url=couchdb_url,
+        couchdb_user=couchdb_user,
+        couchdb_password=couchdb_password,
     )
     if monitor:
         loop = asyncio.get_event_loop()
