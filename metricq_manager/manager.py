@@ -18,6 +18,7 @@
 # You should have received a copy of the GNU General Public License
 # along with metricq.  If not, see <http://www.gnu.org/licenses/>.
 
+import asyncio
 import datetime
 import logging
 import time
@@ -108,12 +109,10 @@ class Manager(Agent):
         self.config_path = config_path
         self.queue_ttl = queue_ttl
 
-        self.couchdb_client = CouchDB(
-            couchdb_url,
-            user=couchdb_user,
-            password=couchdb_password,
-            loop=self.event_loop,
-        )
+        self._couchdb_url = couchdb_url
+        self._couchdb_user = couchdb_user
+        self._couchdb_password = couchdb_password
+
         self.couchdb_db_config = None
         self.couchdb_db_metadata = None
 
@@ -129,6 +128,12 @@ class Manager(Agent):
         }
 
     async def connect_couchdb(self):
+        self.couchdb_client = CouchDB(
+            self._couchdb_url,
+            user=self._couchdb_user,
+            password=self._couchdb_password,
+        )
+
         self.couchdb_db_config = await self.couchdb_client.create(
             "config", exists_ok=True
         )
@@ -776,6 +781,7 @@ def manager_cmd(
             logger.handlers[0] = journal.JournaldLogHandler()
         except ImportError:
             logger.error("Can't enable journal logger, systemd package not found!")
+
     manager = Manager(
         rpc_url,
         data_url,
@@ -786,7 +792,8 @@ def manager_cmd(
         couchdb_password,
     )
     if monitor:
-        with aiomonitor.start_monitor(manager.event_loop, locals={"manager": manager}):
+        loop = asyncio.get_event_loop()
+        with aiomonitor.start_monitor(loop=loop, locals={"manager": manager}):
             manager.run()
     else:
         manager.run()
