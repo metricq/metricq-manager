@@ -337,21 +337,12 @@ class Manager(Agent):
         }
 
     @rpc_handler("release", "sink.release")
-    async def handle_release(self, from_token, **body):
-        queue_name = body["dataQueue"]
-        if self._subscription_autodelete:
-            logger.debug(
-                "Ignoring request to release data queue of {!r} (queue {} is auto-delete)",
-                queue_name,
-                from_token,
-            )
-        else:
-            if not (queue_name.startswith(from_token) and queue_name.endswith("-data")):
-                raise ValueError("Invalid subscription queue name")
-
-            logger.debug("Releasing data queue {} of {!r}", queue_name, from_token)
-
-            await self.queue_manager.sink_delete_data_queue(queue_name)
+    async def handle_release(self, from_token, dataQueue, **body):
+        logger.debug(
+            "Ignoring request to release data queue of {!r} (queue {} is auto-delete)",
+            dataQueue,
+            from_token,
+        )
 
     @rpc_handler("sink.register")
     async def handle_sink_register(self, from_token, **body):
