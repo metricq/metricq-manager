@@ -166,41 +166,59 @@ class Manager(Agent):
         await components.create_view(
             "historic",
             map_function="""function (doc) {
-  if(doc.historic)
-  {
-    var name = ''
-    var components = doc._id.split('.')
-    components.reverse()
-    components.forEach(function (key) {
-      if (name === '') {
-        name = key
-      } else {
-        name = key + '.' + name
-      }
-      emit(name, null)
-    })
-  }
-}""",
+                if(doc.historic)
+                {
+                    var name = ''
+                    var components = doc._id.split('.')
+                    components.reverse()
+                    components.forEach(function (key) {
+                        if (name === '') {
+                            name = key
+                        } else {
+                            name = key + '.' + name
+                        }
+                        emit(name, null)
+                    })
+                }
+            }""",
             exists_ok=True,
         )
         await components.create_view(
+            "all",
+            map_function="""function (doc) {
+                var name = ''
+                var components = doc._id.split('.')
+                components.reverse()
+                components.forEach(function (key) {
+                    if (name === '') {
+                        name = key
+                    } else {
+                        name = key + '.' + name
+                    }
+                    emit(name, null)
+                })
+            }""",
+            exists_ok=True,
+        )
+
+        await components.create_view(
             "not_hidden_and_historic",
             map_function="""function (doc) {
-          if(!doc.hidden && doc.historic)
-          {
-            var name = ''
-            var components = doc._id.split('.')
-            components.reverse()
-            components.forEach(function (key) {
-              if (name === '') {
-                name = key
-              } else {
-                name = key + '.' + name
-              }
-              emit(name, null)
-            })
-          }
-        }""",
+                if(!doc.hidden && doc.historic)
+                {
+                    var name = ''
+                    var components = doc._id.split('.')
+                    components.reverse()
+                    components.forEach(function (key) {
+                        if (name === '') {
+                            name = key
+                        } else {
+                            name = key + '.' + name
+                        }
+                        emit(name, null)
+                    })
+                }
+            }""",
             exists_ok=True,
         )
 
