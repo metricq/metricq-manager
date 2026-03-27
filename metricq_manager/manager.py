@@ -204,14 +204,12 @@ class Manager(Agent):
 
         return selector
 
-    async def _find_metadata(self, selector, limit=None, skip=0, fields=None):
+    async def _find_metadata(self, selector, limit=None, skip=0):
         kwargs = {}
         if limit is not None:
             kwargs["limit"] = limit
         if skip:
             kwargs["skip"] = skip
-        if fields is not None:
-            kwargs["fields"] = fields
         async for doc in self.couchdb_db_metadata.find(selector, **kwargs):
             yield doc
 
@@ -639,7 +637,7 @@ class Manager(Agent):
             )
 
         total = len(
-            [doc async for doc in self._find_metadata(selector, fields=["_id"])]
+            [doc async for doc in self._find_metadata(selector)]
         )
         return {"total": total, "metrics": metrics}
 
@@ -663,7 +661,7 @@ class Manager(Agent):
 
         selector = self._build_metadata_selector(filter_=filter)
         counts = Counter()
-        async for doc in self._find_metadata(selector, fields=["_id", field]):
+        async for doc in self._find_metadata(selector):
             value = doc.json.get(field)
             if value is None:
                 continue
@@ -721,9 +719,8 @@ class Manager(Agent):
             search={"fields": fields, "regex": regex},
         )
         metrics = []
-        projection = ["_id"] + list(dict.fromkeys(fields + list(filter.keys())))
         async for doc in self._find_metadata(
-            selector, limit=limit, skip=offset, fields=projection
+            selector, limit=limit, skip=offset
         ):
             matches = {
                 field: str(doc.json[field])
@@ -741,7 +738,7 @@ class Manager(Agent):
             )
 
         total = len(
-            [doc async for doc in self._find_metadata(selector, fields=["_id"])]
+            [doc async for doc in self._find_metadata(selector)]
         )
         return {"total": total, "metrics": metrics}
 
