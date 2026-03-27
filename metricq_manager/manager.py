@@ -636,10 +636,7 @@ class Manager(Agent):
                 }
             )
 
-        total = len(
-            [doc async for doc in self._find_metadata(selector)]
-        )
-        return {"total": total, "metrics": metrics}
+        return {"metrics": metrics}
 
     @rpc_handler("metrics.suggest")
     async def handle_metrics_suggest(
@@ -737,10 +734,7 @@ class Manager(Agent):
                 }
             )
 
-        total = len(
-            [doc async for doc in self._find_metadata(selector)]
-        )
-        return {"total": total, "metrics": metrics}
+        return {"metrics": metrics}
 
     @rpc_handler("get_metrics", "history.get_metrics")
     async def handle_get_metrics(
