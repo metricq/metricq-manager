@@ -191,7 +191,10 @@ class Manager(Agent):
 
         if filter_:
             for key, value in filter_.items():
-                selector[key] = {"$eq": str(value)}
+                if isinstance(value, list):
+                    selector[key] = {"$in": [str(v) for v in value]}
+                else:
+                    selector[key] = {"$eq": str(value)}
 
         if search:
             fields = search["fields"]
