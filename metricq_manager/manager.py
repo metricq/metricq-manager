@@ -80,8 +80,9 @@ class Manager(Agent):
         "asset_id",
         "location_code",
         "metric_type",
-        "power_type",
+        "circuit",
         "phase",
+        "source",
         "service",
         "team",
         "criticality",
@@ -629,9 +630,7 @@ class Manager(Agent):
 
         selector = self._build_metadata_selector(filter_=filter)
         metrics = []
-        async for doc in self._find_metadata(
-            selector, limit=limit, skip=offset
-        ):
+        async for doc in self._find_metadata(selector, limit=limit, skip=offset):
             metrics.append(
                 {
                     "name": doc.id,
@@ -719,9 +718,7 @@ class Manager(Agent):
             search={"fields": fields, "regex": regex},
         )
         metrics = []
-        async for doc in self._find_metadata(
-            selector, limit=limit, skip=offset
-        ):
+        async for doc in self._find_metadata(selector, limit=limit, skip=offset):
             matches = {
                 field: str(doc.json[field])
                 for field in fields
