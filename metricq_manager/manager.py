@@ -83,6 +83,8 @@ class Manager(Agent):
         "circuit",
         "phase",
         "source",
+        "cluster",
+        "system",
         "service",
         "team",
         "criticality",
