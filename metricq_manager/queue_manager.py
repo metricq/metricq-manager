@@ -154,6 +154,10 @@ class QueueManager:
     ) -> Queue:
         """Declare a new queue."""
 
+        # transient non-exclusive queues are deprecated
+        # as we cannot declare an exclusive queue for somebody else, let's always do durable
+        assert durable is True
+
         return await channel.declare_queue(
             name=name,
             arguments=arguments,
@@ -318,7 +322,7 @@ class QueueManager:
             data_queue = await self.declare_queue(
                 queue_name,
                 auto_delete=True,
-                durable=False,
+                durable=True,
                 arguments=arguments,
                 channel=channel,
             )
@@ -456,6 +460,7 @@ class QueueManager:
                 channel=channel,
                 arguments=arguments,
                 auto_delete=True,
+                durable=True,
             )
 
             return hreq_queue.name
