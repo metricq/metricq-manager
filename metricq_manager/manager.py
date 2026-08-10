@@ -21,7 +21,9 @@
 import asyncio
 import datetime
 import logging
+import re
 import time
+from collections import Counter
 from contextlib import suppress
 from itertools import islice
 from typing import Any, Dict, List, Optional, Tuple, TypedDict, Union
@@ -69,6 +71,38 @@ click_completion.init()
 
 
 class Manager(Agent):
+    FILTERABLE_FIELDS = {
+        "site",
+        "room",
+        "rack",
+        "feed",
+        "asset_type",
+        "asset_id",
+        "location_code",
+        "scope",
+        "metric_type",
+        "circuit",
+        "position",
+        "phase",
+        "source",
+        "cluster",
+        "system",
+        "service",
+        "team",
+        "criticality",
+        "description",
+        "display_name",
+    }
+
+    SEARCHABLE_FIELDS = {
+        "description",
+        "display_name",
+        "location_code",
+        "asset_id",
+    }
+
+    SUGGESTABLE_FIELDS = FILTERABLE_FIELDS - {"description", "display_name"}
+
     def __init__(
         self,
         management_url,
@@ -126,6 +160,66 @@ class Manager(Agent):
             doc.id: doc.data
             async for doc in self.couchdb_db_metadata.docs(metric_ids, create=True)
         }
+
+    @classmethod
+    def _validate_filter_keys(cls, filter_):
+        unknown = sorted(set(filter_) - cls.FILTERABLE_FIELDS)
+        if unknown:
+            raise AttributeError(
+                "unknown filter field(s): {}".format(", ".join(unknown))
+            )
+
+    @classmethod
+    def _build_text_regex(cls, query, mode):
+        if mode == "phrase":
+            return re.escape(query)
+
+        if mode == "words":
+            words = [re.escape(word) for word in query.split() if word]
+            if not words:
+                raise AttributeError('"query" must contain at least one word')
+            return "".join("(?=.*{})".format(word) for word in words) + ".*"
+
+        if mode == "regex":
+            try:
+                re.compile(query)
+            except re.error as error:
+                raise AttributeError(
+                    'invalid regex for "query": {}'.format(error)
+                ) from error
+            return query
+
+        raise AttributeError('unsupported search mode "{}"'.format(mode))
+
+    def _build_metadata_selector(self, filter_=None, search=None):
+        selector = {"historic": True}
+
+        if filter_:
+            for key, value in filter_.items():
+                if isinstance(value, list):
+                    selector[key] = {"$in": [str(v) for v in value]}
+                else:
+                    selector[key] = {"$eq": str(value)}
+
+        if search:
+            fields = search["fields"]
+            regex = search["regex"]
+            field_selectors = [{field: {"$regex": regex}} for field in fields]
+            if len(field_selectors) == 1:
+                selector.update(field_selectors[0])
+            else:
+                selector["$or"] = field_selectors
+
+        return selector
+
+    async def _find_metadata(self, selector, limit=None, skip=0):
+        kwargs = {}
+        if limit is not None:
+            kwargs["limit"] = limit
+        if skip:
+            kwargs["skip"] = skip
+        async for doc in self.couchdb_db_metadata.find(selector, **kwargs):
+            yield doc
 
     async def connect_couchdb(self):
         self.couchdb_client = CouchDB(
@@ -522,6 +616,129 @@ class Manager(Agent):
         metric_list = [key async for key in self.couchdb_db_metadata.akeys()]
         response = {"metric_list": metric_list}
         return response
+
+    @rpc_handler("metrics.resolve")
+    async def handle_metrics_resolve(
+        self, from_token, filter=None, limit=200, offset=0, **body
+    ):
+        if filter is None:
+            filter = {}
+        if not isinstance(filter, dict):
+            raise AttributeError('"filter" must be an object')
+        self._validate_filter_keys(filter)
+
+        if limit is not None and (not isinstance(limit, int) or limit < 0):
+            raise AttributeError('"limit" must be a non-negative integer or null')
+        if not isinstance(offset, int) or offset < 0:
+            raise AttributeError('"offset" must be a non-negative integer')
+
+        selector = self._build_metadata_selector(filter_=filter)
+        metrics = []
+        async for doc in self._find_metadata(selector, limit=limit, skip=offset):
+            metrics.append(
+                {
+                    "name": doc.id,
+                    "metadata": doc.json,
+                }
+            )
+
+        return {"metrics": metrics}
+
+    @rpc_handler("metrics.suggest")
+    async def handle_metrics_suggest(
+        self, from_token, field=None, filter=None, limit=100, **body
+    ):
+        if not isinstance(field, str) or not field:
+            raise AttributeError('"field" must be a non-empty string')
+        if field not in self.SUGGESTABLE_FIELDS:
+            raise AttributeError('field "{}" is not suggestable'.format(field))
+
+        if filter is None:
+            filter = {}
+        if not isinstance(filter, dict):
+            raise AttributeError('"filter" must be an object')
+        self._validate_filter_keys(filter)
+
+        if limit is not None and (not isinstance(limit, int) or limit < 0):
+            raise AttributeError('"limit" must be a non-negative integer or null')
+
+        selector = self._build_metadata_selector(filter_=filter)
+        counts = Counter()
+        async for doc in self._find_metadata(selector):
+            value = doc.json.get(field)
+            if value is None:
+                continue
+
+            counts[str(value)] += 1
+
+        values = [
+            {"value": value, "count": count}
+            for value, count in counts.most_common(limit)
+        ]
+        return {"field": field, "values": values}
+
+    @rpc_handler("metrics.search")
+    async def handle_metrics_search(
+        self,
+        from_token,
+        query=None,
+        fields=None,
+        mode="words",
+        filter=None,
+        limit=50,
+        offset=0,
+        **body,
+    ):
+        if not isinstance(query, str) or not query.strip():
+            raise AttributeError('"query" must be a non-empty string')
+
+        if fields is None:
+            fields = ["description"]
+        if not isinstance(fields, list) or not all(
+            isinstance(field, str) for field in fields
+        ):
+            raise AttributeError('"fields" must be a list of strings')
+
+        invalid_fields = sorted(set(fields) - self.SEARCHABLE_FIELDS)
+        if invalid_fields:
+            raise AttributeError(
+                "unknown searchable field(s): {}".format(", ".join(invalid_fields))
+            )
+
+        if filter is None:
+            filter = {}
+        if not isinstance(filter, dict):
+            raise AttributeError('"filter" must be an object')
+        self._validate_filter_keys(filter)
+
+        if limit is not None and (not isinstance(limit, int) or limit < 0):
+            raise AttributeError('"limit" must be a non-negative integer or null')
+        if not isinstance(offset, int) or offset < 0:
+            raise AttributeError('"offset" must be a non-negative integer')
+
+        regex = self._build_text_regex(query, mode)
+        selector = self._build_metadata_selector(
+            filter_=filter,
+            search={"fields": fields, "regex": regex},
+        )
+        metrics = []
+        async for doc in self._find_metadata(selector, limit=limit, skip=offset):
+            matches = {
+                field: str(doc.json[field])
+                for field in fields
+                if doc.json.get(field) is not None
+            }
+
+            metrics.append(
+                {
+                    "name": doc.id,
+                    "score": 1.0,
+                    "matches": matches,
+                    "metadata": doc.json,
+                }
+            )
+
+        return {"metrics": metrics}
 
     @rpc_handler("get_metrics", "history.get_metrics")
     async def handle_get_metrics(
