@@ -277,7 +277,7 @@ class QueueManager:
         client_token: str,
         queue_name: Optional[str],
         expires: Optional[Seconds] = None,
-        bindinds: Optional[List[Metric]] = None,
+        bindings: Optional[List[Metric]] = None,
     ) -> DataQueueName:
         """Declare a Sink's data queue and bind the requested metrics to it.
 
@@ -289,7 +289,7 @@ class QueueManager:
                 If given, the queue is declared with this name, reusing it if it already exists.
             expires:
                 The number of seconds after which the queue will be deleted once the Sink disconnects.
-            bindinds:
+            bindings:
                 An optional list of metrics names this Sink subscribes to.
                 These are bound to the newly declared data queue.
 
@@ -327,9 +327,9 @@ class QueueManager:
                 channel=channel,
             )
 
-            if bindinds:
+            if bindings:
                 await self._bind_metrics(
-                    metrics=bindinds,
+                    metrics=bindings,
                     queue=data_queue,
                     exchange=self.data_exchange,
                     channel=channel,
@@ -491,14 +491,14 @@ class QueueManager:
     async def transformer_declare_data_queue(
         self,
         transformer_token: str,
-        bindinds: Optional[List[Metric]] = None,
+        bindings: Optional[List[Metric]] = None,
     ) -> DataQueueName:
         """Declare a Transformer's data queue and bind the requested metrics to it.
 
         Args:
             transformer_token:
                 Token of the Transformer.
-            bindinds:
+            bindings:
                 An optional list of metrics to bind on this queue.
         """
         async with self.temporary_channel() as channel:
@@ -509,10 +509,10 @@ class QueueManager:
                 channel=channel,
             )
 
-            if bindinds:
+            if bindings:
                 # TODO Also unbind other metrics that are no longer relevant
                 await self._bind_metrics(
-                    metrics=bindinds,
+                    metrics=bindings,
                     queue=data_queue,
                     exchange=self.data_exchange,
                     channel=channel,
@@ -548,22 +548,22 @@ class QueueManager:
             async def declare_queue_and_bind(
                 display_name: str,
                 config: ConfigParser,
-                bindinds: Optional[List[Metric]],
+                bindings: Optional[List[Metric]],
                 channel: RobustChannel,
                 exchange: ExchangeName,
             ):
                 logger.info("Declaring {} for database {!r}", display_name, db_token)
                 queue = await self.declare_durable_queue(config=config, channel=channel)
 
-                if bindinds is not None:
+                if bindings is not None:
                     logger.info(
                         "Binding {} metric(s) to {} for database {!r}",
-                        len(bindinds),
+                        len(bindings),
                         display_name,
                         db_token,
                     )
                     await self._bind_metrics(
-                        metrics=bindinds,
+                        metrics=bindings,
                         queue=queue,
                         exchange=exchange,
                         channel=channel,
@@ -574,14 +574,14 @@ class QueueManager:
                 declare_queue_and_bind(
                     display_name="data queue",
                     config=data_config,
-                    bindinds=data_bindings,
+                    bindings=data_bindings,
                     channel=channel,
                     exchange=self.data_exchange,
                 ),
                 declare_queue_and_bind(
                     display_name="history request queue",
                     config=hreq_config,
-                    bindinds=history_bindings,
+                    bindings=history_bindings,
                     channel=channel,
                     exchange=self.history_exchange,
                 ),
